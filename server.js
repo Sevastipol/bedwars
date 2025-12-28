@@ -25,9 +25,9 @@ const BLOCK_TYPES = {
 };
 const MAX_STACK = 64;
 const INVENTORY_SIZE = 9;
-const BED_DESTRUCTION_TIME = 10 * 60 * 1000; // 10 minutes
-const ROUND_DURATION = 15 * 60 * 1000; // 15 minutes
-const REQUIRED_PLAYERS = 2; // Minimum players to start
+const BED_DESTRUCTION_TIME = 10 * 60 * 1000;
+const ROUND_DURATION = 15 * 60 * 1000;
+const REQUIRED_PLAYERS = 2;
 
 // State
 const blocks = new Map();
@@ -59,13 +59,11 @@ function removeBlock(x, y, z) {
     blocks.delete(key);
     io.emit('removeBlock', { x, y, z });
     
-    // Handle bed destruction
     if (type === 'Bed') {
         players.forEach((p, id) => {
             if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
                 p.bedPos = null;
                 io.to(id).emit('bedDestroyed');
-                // Bed disappears, no bed block given
             }
         });
     }
@@ -113,23 +111,19 @@ function deductCurrency(currency, cost) {
     }
 }
 
-// NEW: Calculate players needed
 function getPlayersNeeded() {
     const connectedPlayers = Array.from(players.values()).filter(p => !p.spectator).length;
     return Math.max(0, REQUIRED_PLAYERS - connectedPlayers);
 }
 
-// NEW: Update all clients with waiting message
 function updateWaitingMessages() {
     const playersNeeded = getPlayersNeeded();
     io.emit('updateWaiting', playersNeeded);
 }
 
-// NEW: Start round timer
 function startRoundTimer() {
-    let timeRemaining = ROUND_DURATION / 1000; // Convert to seconds
+    let timeRemaining = ROUND_DURATION / 1000;
     
-    // Clear existing timer
     if (roundTimerInterval) {
         clearInterval(roundTimerInterval);
     }
@@ -141,7 +135,6 @@ function startRoundTimer() {
         if (timeRemaining <= 0) {
             clearInterval(roundTimerInterval);
             
-            // End round
             if (players.size > 0) {
                 const alivePlayers = Array.from(players.entries()).filter(([id, p]) => !p.spectator);
                 if (alivePlayers.length > 0) {
@@ -150,13 +143,11 @@ function startRoundTimer() {
                 }
             }
             
-            // Reset after delay
             setTimeout(resetGame, 5000);
         }
     }, 1000);
 }
 
-// NEW: Stop round timer
 function stopRoundTimer() {
     if (roundTimerInterval) {
         clearInterval(roundTimerInterval);
@@ -164,7 +155,6 @@ function stopRoundTimer() {
     }
 }
 
-// Init world
 function createIsland(offsetX, offsetZ, spawnerType = null) {
     for (let x = 0; x < 6; x++) {
         for (let z = 0; z < 6; z++) {
@@ -212,7 +202,6 @@ function resetGame() {
     });
     const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
     
-    // Reset all players
     let availableIslands = [...playerIslands];
     players.forEach((p, id) => {
         p.inventory = new Array(INVENTORY_SIZE).fill(null);
@@ -231,7 +220,7 @@ function resetGame() {
             p.pos = { x: island.bedX + 0.5, y: island.bedY + 2, z: island.bedZ + 0.5 };
         } else {
             p.pos = { x: 9 + 2.5, y: 5, z: 9 + 2.5 };
-            p.spectator = true; // New players become spectators if no island
+            p.spectator = true;
         }
         
         io.to(id).emit('playerReset', {
@@ -250,7 +239,6 @@ function resetGame() {
     roundStartTime = null;
     stopRoundTimer();
     
-    // Update waiting messages
     updateWaitingMessages();
 }
 
@@ -267,10 +255,9 @@ io.on('connection', (socket) => {
         selected: 0,
         bedPos: null,
         lastRespawn: 0,
-        spectator: true // Start as spectator
+        spectator: true
     };
     
-    // Only assign island if game is waiting
     if (gameState === 'waiting') {
         const availableIslands = playerIslands.filter(island => 
             !Array.from(players.values()).some(p => 
@@ -289,7 +276,6 @@ io.on('connection', (socket) => {
     
     players.set(socket.id, playerState);
 
-    // Send initial world
     const initBlocks = Array.from(blocks, ([key, type]) => {
         const [x, y, z] = key.split(',').map(Number);
         return { x, y, z, type };
@@ -304,16 +290,12 @@ io.on('connection', (socket) => {
         playersNeeded: getPlayersNeeded()
     });
 
-    // Send your ID
     socket.emit('yourId', socket.id);
-    
-    // Set spectator mode
     socket.emit('setSpectator', playerState.spectator);
 
-    // Send other players (excluding spectators)
     const otherPlayers = Array.from(players.entries())
         .filter(([id]) => id !== socket.id)
-        .filter(([_, p]) => !p.spectator) // Don't send spectators
+        .filter(([_, p]) => !p.spectator)
         .map(([id, p]) => ({ 
             id, 
             pos: p.pos, 
@@ -323,7 +305,6 @@ io.on('connection', (socket) => {
         }));
     socket.emit('playersSnapshot', otherPlayers);
 
-    // Broadcast new player (only if not spectator)
     if (!playerState.spectator) {
         socket.broadcast.emit('newPlayer', { 
             id: socket.id, 
@@ -334,7 +315,6 @@ io.on('connection', (socket) => {
         });
     }
 
-    // Start countdown if enough players
     if (gameState === 'waiting') {
         const activePlayers = Array.from(players.values()).filter(p => !p.spectator).length;
         updateWaitingMessages();
@@ -353,10 +333,8 @@ io.on('connection', (socket) => {
                     gameState = 'playing';
                     roundStartTime = Date.now();
                     
-                    // Start resource spawning
                     spawners.forEach(s => s.lastSpawn = Date.now());
                     
-                    // Start round timer
                     startRoundTimer();
                     
                     io.emit('gameStart');
@@ -367,7 +345,7 @@ io.on('connection', (socket) => {
 
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
-        if (p && !p.spectator) { // Spectators can't update position
+        if (p && !p.spectator) {
             p.pos = data.pos;
             p.rot = data.rot;
             p.crouch = data.crouch;
@@ -379,7 +357,7 @@ io.on('connection', (socket) => {
         if (!pickups.has(id)) return;
         
         const p = players.get(socket.id);
-        if (p.spectator) return; // Spectators can't collect
+        if (p.spectator) return;
         
         const pickup = pickups.get(id);
         const dist = Math.hypot(p.pos.x - pickup.x, p.pos.y - pickup.y, p.pos.z - pickup.z);
@@ -390,7 +368,7 @@ io.on('connection', (socket) => {
         }
         
         const res = pickup.resourceType;
-        p.currency[res]++;
+        p.currency[res] = (p.currency[res] || 0) + 1;
         pickups.delete(id);
         io.emit('removePickup', id);
         socket.emit('updateCurrency', { ...p.currency });
@@ -398,7 +376,7 @@ io.on('connection', (socket) => {
 
     socket.on('breakAttempt', ({ x, y, z }) => {
         const p = players.get(socket.id);
-        if (p.spectator) return; // Spectators can't break
+        if (p.spectator) return;
         
         const key = blockKey(x, y, z);
         if (!blocks.has(key)) {
@@ -408,9 +386,7 @@ io.on('connection', (socket) => {
         
         const type = blocks.get(key);
         
-        // Check if it's a bed
         if (type === 'Bed') {
-            // Bed destruction - just remove it without giving block
             removeBlock(x, y, z);
             return;
         }
@@ -436,7 +412,7 @@ io.on('connection', (socket) => {
 
     socket.on('placeAttempt', ({ x, y, z, type }) => {
         const p = players.get(socket.id);
-        if (p.spectator) return; // Spectators can't place
+        if (p.spectator) return;
         
         const key = blockKey(x, y, z);
         if (blocks.has(key)) {
@@ -469,7 +445,7 @@ io.on('connection', (socket) => {
 
     socket.on('buyAttempt', (btype) => {
         const p = players.get(socket.id);
-        if (p.spectator) return; // Spectators can't buy
+        if (p.spectator) return;
         
         if (btype === 'Bed') {
             socket.emit('buyFailed');
@@ -502,17 +478,14 @@ io.on('connection', (socket) => {
         
         const p = players.get(socket.id);
         if (p && p.bedPos) {
-            // Remove player's bed if they disconnect
             removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
         }
         
         players.delete(socket.id);
         io.emit('removePlayer', socket.id);
         
-        // Update waiting messages
         updateWaitingMessages();
         
-        // Stop countdown if not enough players
         if (gameState === 'waiting' && countdownTimer) {
             const activePlayers = Array.from(players.values()).filter(p => !p.spectator).length;
             if (activePlayers < REQUIRED_PLAYERS) {
@@ -524,11 +497,10 @@ io.on('connection', (socket) => {
     });
 });
 
-// Game loop (spawns + player sync)
+// Game loop
 setInterval(() => {
     const now = Date.now();
     
-    // Only spawn resources if game is playing
     if (gameState === 'playing') {
         spawners.forEach((s) => {
             if (now - s.lastSpawn >= s.interval) {
@@ -547,9 +519,8 @@ setInterval(() => {
             suddenDeath = true;
         }
 
-        // Check for death/respawn
         players.forEach((p, id) => {
-            if (p.spectator) return; // Skip spectators
+            if (p.spectator) return;
             
             if (p.pos.y < -30 && now - p.lastRespawn > 2000) {
                 if (p.bedPos && blocks.get(blockKey(p.bedPos.x, p.bedPos.y, p.bedPos.z)) === 'Bed') {
@@ -560,9 +531,8 @@ setInterval(() => {
                     p.rot.pitch = 0;
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                 } else {
-                    // Player eliminated - become spectator
                     p.spectator = true;
-                    p.pos = { x: 0, y: 50, z: 0 }; // Move to spectator area
+                    p.pos = { x: 0, y: 50, z: 0 };
                     io.to(id).emit('setSpectator', true);
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                     io.to(id).emit('notification', 'Eliminated! You are now a spectator.');
@@ -571,7 +541,6 @@ setInterval(() => {
             }
         });
 
-        // Check for winner
         const activePlayers = Array.from(players.values()).filter(p => !p.spectator);
         if (activePlayers.length === 1) {
             const winnerId = Array.from(players.entries()).find(([_, p]) => !p.spectator)[0];
@@ -585,7 +554,6 @@ setInterval(() => {
         }
     }
 
-    // Sync players (20 FPS)
     const states = Array.from(players.entries()).map(([id, p]) => ({
         id,
         pos: p.pos,
