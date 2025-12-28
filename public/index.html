@@ -225,10 +225,50 @@
             font-size: 24px;
             z-index: 100;
         }
+
+        /* Notification System */
+        #notification {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 50;
+            max-width: 500px;
+            text-align: center;
+            border: 2px solid #555;
+        }
+
+        #notification.show {
+            opacity: 1;
+        }
+
+        #notification.error {
+            border-color: #ff5555;
+            background: rgba(50, 0, 0, 0.9);
+        }
+
+        #notification.warning {
+            border-color: #ffaa00;
+            background: rgba(50, 40, 0, 0.9);
+        }
+
+        #notification.info {
+            border-color: #5555ff;
+            background: rgba(0, 0, 50, 0.9);
+        }
     </style>
 </head>
 <body>
     <div id="loading">Connecting to server...</div>
+    <div id="notification"></div>
     <div id="crosshair"></div>
     <div id="stats">
         <div class="currency-row">
@@ -869,6 +909,17 @@
         let lastPlayerUpdate = 0;
         const PLAYER_UPDATE_RATE = 50;
 
+        // Notification system
+        function showNotification(message, type = 'info', duration = 3000) {
+            const notif = document.getElementById('notification');
+            notif.textContent = message;
+            notif.className = `show ${type}`;
+            
+            setTimeout(() => {
+                notif.classList.remove('show');
+            }, duration);
+        }
+
         // Inventory, UI, shop functions
         function addToInventory(blockType, amount) {
             for (let i = 0; i < INVENTORY_SIZE; i++) {
@@ -1180,7 +1231,7 @@
             updateUI();
         });
         socket.on('buyFailed', () => {
-            alert('Not enough resources or inventory full!');
+            showNotification('Not enough resources or inventory full!', 'error');
             renderShop();
         });
 
@@ -1195,15 +1246,16 @@
         socket.on('respawn', (pos) => {
             camera.position.set(pos.x, pos.y, pos.z);
             velocity.y = 0;
+            showNotification('Respawned at your bed', 'info');
         });
 
         socket.on('cannotRespawn', () => {
-            alert('Your bed was destroyed! You cannot respawn.');
+            showNotification('Cannot respawn: Your bed was destroyed!', 'error', 5000);
             camera.position.set(0, -100, 0);
         });
 
         socket.on('bedDestroyed', () => {
-            alert('WARNING: Your bed has been destroyed! You will not be able to respawn if you die.');
+            showNotification('⚠️ WARNING: Your bed has been destroyed! You will not be able to respawn if you die.', 'warning', 5000);
         });
 
         selectSlot(0);
