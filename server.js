@@ -13,264 +13,360 @@ const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => console.log(`Server on port ${PORT}`));
 
-// Config (copied from client)
+// --- Configuration ---
+const MAX_DROPS_PER_SPAWNER = 64;
+const VOID_Y_LEVEL = -20;
+
+// Island Layout (4 Teams)
+const ISLANDS = [
+    { id: 'red', color: 'Red', hex: 0xff4444, x: -25, z: -25, owner: null },
+    { id: 'blue', color: 'Blue', hex: 0x4444ff, x: 25, z: -25, owner: null },
+    { id: 'green', color: 'Green', hex: 0x44ff44, x: -25, z: 25, owner: null },
+    { id: 'yellow', color: 'Yellow', hex: 0xffff44, x: 25, z: 25, owner: null }
+];
+
 const BLOCK_TYPES = {
-    'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true },
-    'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6 },
-    'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
-    'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
-    'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true }
+    'Grass': { buyAmount: 8, cost: { iron: 4 } },
+    'Wood': { buyAmount: 16, cost: { gold: 4 } },
+    'Stone': { buyAmount: 16, cost: { iron: 10 } },
+    'Obsidian': { buyAmount: 1, cost: { emerald: 4 } },
+    'Bed': { buyAmount: 0, cost: { emerald: 999 } } // Not buyable
 };
-const MAX_STACK = 64;
-const INVENTORY_SIZE = 9;
 
-// State
-const blocks = new Map(); // `${x},${y},${z}` -> type
-const pickups = new Map(); // id -> {x, y, z, resourceType}
+// --- Game State ---
+const blocks = new Map(); // Key: "x,y,z" -> type
+const pickups = new Map(); // Key: id -> {x,y,z,type,spawnerId}
+const players = new Map(); // Key: socket.id -> Player Object
 const spawners = [];
-const players = new Map(); // id -> {pos: {x,y,z}, rot: {yaw, pitch}, crouch: bool, inventory: array, currency: obj, selected: num}
 
-function blockKey(x, y, z) {
-    return `${x},${y},${z}`;
-}
+// Helper to generate map key
+const getKey = (x, y, z) => `${x},${y},${z}`;
 
-function addBlock(x, y, z, type) {
-    const key = blockKey(x, y, z);
-    if (blocks.has(key)) return false;
-    blocks.set(key, type);
-    io.emit('addBlock', { x, y, z, type });
-    return true;
-}
+// --- World Generation ---
+function initWorld() {
+    // Generate 4 Islands
+    ISLANDS.forEach(island => {
+        const startX = island.x;
+        const startZ = island.z;
+        const startY = 0;
 
-function removeBlock(x, y, z) {
-    const key = blockKey(x, y, z);
-    if (!blocks.has(key)) return false;
-    blocks.delete(key);
-    io.emit('removeBlock', { x, y, z });
-    return true;
-}
-
-function spawnPickup(x, y, z, resourceType) {
-    const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-    pickups.set(id, { x, y, z, resourceType });
-    io.emit('addPickup', { id, x, y, z, resourceType });
-}
-
-function addToInventory(inv, type, amount) {
-    let remaining = amount;
-    // Fill existing stacks
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
-        if (inv[i] && inv[i].type === type && inv[i].count < MAX_STACK) {
-            const space = MAX_STACK - inv[i].count;
-            const add = Math.min(space, remaining);
-            inv[i].count += add;
-            remaining -= add;
-            if (remaining === 0) return true;
+        // Platform 5x5
+        for (let x = -2; x <= 2; x++) {
+            for (let z = -2; z <= 2; z++) {
+                blocks.set(getKey(startX + x, startY, startZ + z), 'Grass');
+            }
         }
-    }
-    // New stacks
-    for (let i = 0; i < INVENTORY_SIZE; i++) {
-        if (!inv[i]) {
-            const add = Math.min(MAX_STACK, remaining);
-            inv[i] = { type, count: add };
-            remaining -= add;
-            if (remaining === 0) return true;
-        }
-    }
-    return remaining === 0;
-}
 
-function canAfford(currency, cost) {
-    for (const [res, amt] of Object.entries(cost)) {
-        if ((currency[res] || 0) < amt) return false;
-    }
-    return true;
-}
+        // Place Bed (Hardcoded position on island)
+        const bedX = startX; 
+        const bedY = startY + 1;
+        const bedZ = startZ - 1;
+        blocks.set(getKey(bedX, bedY, bedZ), 'Bed');
+        island.bedLocation = { x: bedX, y: bedY, z: bedZ };
 
-function deductCurrency(currency, cost) {
-    for (const [res, amt] of Object.entries(cost)) {
-        currency[res] -= amt;
-    }
-}
-
-// Init world (islands + spawners)
-function createIsland(offsetX, offsetZ, spawnerType = null) {
-    for (let x = 0; x < 6; x++) {
-        for (let z = 0; z < 6; z++) {
-            addBlock(offsetX + x, 0, offsetZ + z, 'Grass');
-        }
-    }
-    if (spawnerType) {
-        const s = {
-            x: offsetX + 2.5, y: 1, z: offsetZ + 2.5,
-            resourceType: spawnerType.type,
-            interval: spawnerType.interval * 1000,
+        // Add Generator (Iron)
+        spawners.push({
+            id: `gen_${island.id}`,
+            x: startX, y: startY + 1.5, z: startZ + 1,
+            type: 'iron',
+            interval: 2000,
             lastSpawn: Date.now()
-        };
-        spawners.push(s);
+        });
+    });
+
+    // Middle Islands (Gold/Diamond)
+    const midSpawners = [
+        { x: 0, z: 10, type: 'gold', interval: 5000 },
+        { x: 0, z: -10, type: 'gold', interval: 5000 },
+        { x: 0, z: 0, type: 'emerald', interval: 12000 }
+    ];
+
+    midSpawners.forEach((s, i) => {
+        // Small platform
+        for(let x=-1; x<=1; x++) {
+            for(let z=-1; z<=1; z++) {
+                blocks.set(getKey(s.x + x, 0, s.z + z), 'Stone');
+            }
+        }
+        spawners.push({
+            id: `mid_${i}`,
+            x: s.x, y: 1.5, z: s.z,
+            type: s.type,
+            interval: s.interval,
+            lastSpawn: Date.now()
+        });
+    });
+}
+
+initWorld();
+
+// --- Functions ---
+
+function getDropCountForSpawner(spawnerId) {
+    let count = 0;
+    for (const p of pickups.values()) {
+        if (p.spawnerId === spawnerId) count++;
+    }
+    return count;
+}
+
+function killPlayer(socket, final) {
+    const player = players.get(socket.id);
+    if (!player) return;
+
+    if (final) {
+        player.dead = true;
+        // Teleport to spectator box
+        player.pos = { x: 0, y: 30, z: 0 };
+        socket.emit('notification', 'ELIMINATED! You are now a spectator.', '#ff0000', 0); // 0 = permanent
+        socket.emit('setSpectator');
+        io.emit('chatMessage', `Player ${player.team ? player.team.color : 'Unknown'} was ELIMINATED!`);
+    } else {
+        // Respawn
+        const island = player.team;
+        if (island) {
+            player.pos = { x: island.x, y: 5, z: island.z };
+            player.velocity = { x: 0, y: 0, z: 0 };
+            socket.emit('teleport', player.pos);
+            socket.emit('notification', 'You died! Respawning...', '#ffaa00', 3000);
+        }
     }
 }
 
-createIsland(-15, -15, { type: 'iron', interval: 3 });
-createIsland(33, -15, { type: 'iron', interval: 3 });
-createIsland(-15, 33, { type: 'iron', interval: 3 });
-createIsland(33, 33, { type: 'iron', interval: 3 });
-createIsland(9, -15, { type: 'gold', interval: 8 });
-createIsland(9, 33, { type: 'gold', interval: 8 });
-createIsland(9, 9, { type: 'emerald', interval: 10 });
-
-// Socket connections
+// --- Socket Logic ---
 io.on('connection', (socket) => {
-    console.log(`New connection: ${socket.id}`);
+    console.log('User connected:', socket.id);
+
+    // Assign Team/Island
+    let team = ISLANDS.find(i => i.owner === null);
+    
+    // Default spawn (Hub/Spectator if full)
+    let startPos = { x: 0, y: 10, z: 0 };
+    let hasBed = false;
+
+    if (team) {
+        team.owner = socket.id;
+        startPos = { x: team.x, y: 5, z: team.z };
+        hasBed = true;
+        socket.emit('notification', `You are on the ${team.color} Team!`, team.hex, 5000);
+    } else {
+        socket.emit('notification', 'Server Full! Spectator Mode.', '#ffffff', 5000);
+        socket.emit('setSpectator');
+    }
+
     const playerState = {
-        pos: { x: -12, y: 5, z: -12 },
+        id: socket.id,
+        team: team, // Reference to island object
+        pos: startPos,
         rot: { yaw: 0, pitch: 0 },
         crouch: false,
-        inventory: new Array(INVENTORY_SIZE).fill(null),
+        inventory: new Array(9).fill(null),
         currency: { iron: 0, gold: 0, emerald: 0 },
-        selected: 0
+        hasBed: hasBed,
+        dead: !team // If no team, technically "dead"/spectator
     };
     players.set(socket.id, playerState);
 
-    // Send initial world
-    const initBlocks = Array.from(blocks, ([key, type]) => {
-        const [x, y, z] = key.split(',').map(Number);
-        return { x, y, z, type };
+    // Initial Data Send
+    socket.emit('init', {
+        id: socket.id,
+        blocks: Array.from(blocks.entries()).map(([k, v]) => {
+            const [x, y, z] = k.split(',').map(Number);
+            return { x, y, z, type: v };
+        }),
+        pickups: Array.from(pickups.entries()).map(([k, v]) => ({ id: k, ...v })),
+        position: startPos
     });
-    const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
-    socket.emit('initWorld', { blocks: initBlocks, pickups: initPickups, spawners });
 
-    // Send your ID
-    socket.emit('yourId', socket.id);
-
-    // Send other players
-    const otherPlayers = Array.from(players.entries())
-        .filter(([id]) => id !== socket.id)
-        .map(([id, p]) => ({ id, pos: p.pos, rot: p.rot, crouch: p.crouch }));
-    socket.emit('playersSnapshot', otherPlayers);
-
-    // Broadcast new player
-    socket.broadcast.emit('newPlayer', { id: socket.id, pos: playerState.pos, rot: playerState.rot, crouch: playerState.crouch });
+    // --- In-Game Events ---
 
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
-        if (p) {
-            p.pos = data.pos;
-            p.rot = data.rot;
-            p.crouch = data.crouch;
-            p.selected = data.selected;
+        if (!p) return;
+
+        p.pos = data.pos;
+        p.rot = data.rot;
+        p.crouch = data.crouch;
+
+        // Broadcast to others (throttled by client emit rate usually, but good to relay)
+        socket.broadcast.emit('remotePlayerUpdate', {
+            id: socket.id,
+            pos: p.pos,
+            rot: p.rot,
+            crouch: p.crouch,
+            teamColor: p.team ? p.team.hex : 0xffffff
+        });
+
+        // Void Check
+        if (!p.dead && p.pos.y < VOID_Y_LEVEL) {
+            if (p.hasBed) {
+                killPlayer(socket, false);
+            } else {
+                killPlayer(socket, true);
+            }
         }
     });
 
-    socket.on('claimPickupAttempt', (id) => {
-        if (!pickups.has(id)) return;
-        const pickup = pickups.get(id);
+    socket.on('placeBlock', (data) => {
         const p = players.get(socket.id);
-        const dist = Math.hypot(p.pos.x - pickup.x, p.pos.y - pickup.y, p.pos.z - pickup.z);
-        if (dist >= 1.5) {
-            socket.emit('revertPickup', { id, x: pickup.x, y: pickup.y, z: pickup.z, resourceType: pickup.resourceType });
-            return;
+        if (!p || p.dead) return;
+
+        // Check distance
+        const dist = Math.hypot(data.x - p.pos.x, data.y - p.pos.y, data.z - p.pos.z);
+        if (dist > 8) return;
+
+        const key = getKey(data.x, data.y, data.z);
+        if (blocks.has(key)) return;
+
+        // Inventory check
+        const item = p.inventory[data.slot];
+        if (item && item.type === data.type && item.count > 0) {
+            item.count--;
+            if (item.count <= 0) p.inventory[data.slot] = null;
+            
+            blocks.set(key, data.type);
+            io.emit('blockUpdate', { action: 'add', x: data.x, y: data.y, z: data.z, type: data.type });
+            socket.emit('inventoryUpdate', p.inventory);
         }
-        const res = pickup.resourceType;
-        p.currency[res]++;
-        pickups.delete(id);
-        io.emit('removePickup', id);
-        socket.emit('updateCurrency', { ...p.currency });
     });
 
-    socket.on('breakAttempt', ({ x, y, z }) => {
-        const key = blockKey(x, y, z);
-        if (!blocks.has(key)) {
-            socket.emit('revertBreak', { x, y, z, type: null });
-            return;
-        }
+    socket.on('breakBlock', (data) => {
         const p = players.get(socket.id);
-        const dist = Math.hypot(
-            p.pos.x - (x + 0.5),
-            (p.pos.y - (p.crouch ? 1.3 : 1.6)) - (y + 0.5),
-            p.pos.z - (z + 0.5)
-        );
-        if (dist > 5) {
-            socket.emit('revertBreak', { x, y, z, type: blocks.get(key) });
-            return;
-        }
+        if (!p || p.dead) return;
+
+        const key = getKey(data.x, data.y, data.z);
         const type = blocks.get(key);
-        if (addToInventory(p.inventory, type, 1)) {
-            removeBlock(x, y, z);
-            socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        
+        if (!type) return;
+
+        // Handle Bed Destruction
+        if (type === 'Bed') {
+            const victimTeam = ISLANDS.find(i => 
+                i.bedLocation && 
+                i.bedLocation.x === data.x && 
+                i.bedLocation.y === data.y && 
+                i.bedLocation.z === data.z
+            );
+
+            if (victimTeam) {
+                // Notify Everyone
+                io.emit('notification', `${victimTeam.color} Team's Bed was destroyed!`, '#ff0000', 4000);
+                
+                // Update Victim State
+                const victimSocketId = victimTeam.owner;
+                const victimPlayer = players.get(victimSocketId);
+                if (victimPlayer) {
+                    victimPlayer.hasBed = false;
+                    // Specific alert for victim
+                    io.to(victimSocketId).emit('notification', 'YOUR BED IS GONE! You will not respawn.', '#ff0000', 8000);
+                }
+            }
+        }
+
+        blocks.delete(key);
+        io.emit('blockUpdate', { action: 'remove', x: data.x, y: data.y, z: data.z });
+        
+        // Add drop to inventory (if not bed)
+        if (type !== 'Bed') {
+            // Simplified: direct add for demo
+            // In full game: drop item entity or check stack limit
+        }
+    });
+
+    socket.on('buyItem', (type) => {
+        const p = players.get(socket.id);
+        if (!p || p.dead) return;
+
+        const itemInfo = BLOCK_TYPES[type];
+        if (!itemInfo) return;
+
+        // Check Cost
+        let canAfford = true;
+        for (let [res, amt] of Object.entries(itemInfo.cost)) {
+            if (p.currency[res] < amt) canAfford = false;
+        }
+
+        if (canAfford) {
+            // Deduct
+            for (let [res, amt] of Object.entries(itemInfo.cost)) {
+                p.currency[res] -= amt;
+            }
+            // Add to Inventory
+            let added = false;
+            // Try stack
+            for(let i=0; i<9; i++) {
+                if (p.inventory[i] && p.inventory[i].type === type && p.inventory[i].count < 64) {
+                    p.inventory[i].count += itemInfo.buyAmount;
+                    added = true;
+                    break;
+                }
+            }
+            // Empty slot
+            if (!added) {
+                for(let i=0; i<9; i++) {
+                    if (!p.inventory[i]) {
+                        p.inventory[i] = { type: type, count: itemInfo.buyAmount };
+                        added = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!added) {
+                // Refund if full
+                for (let [res, amt] of Object.entries(itemInfo.cost)) {
+                    p.currency[res] += amt;
+                }
+                socket.emit('notification', 'Inventory Full!', 'orange', 2000);
+            } else {
+                socket.emit('currencyUpdate', p.currency);
+                socket.emit('inventoryUpdate', p.inventory);
+            }
         } else {
-            socket.emit('revertBreak', { x, y, z, type });
+            socket.emit('notification', 'Not enough resources!', 'red', 2000);
         }
     });
 
-    socket.on('placeAttempt', ({ x, y, z, type }) => {
-        const key = blockKey(x, y, z);
-        if (blocks.has(key)) {
-            socket.emit('revertPlace', { x, y, z });
-            return;
-        }
+    socket.on('pickup', (id) => {
         const p = players.get(socket.id);
-        const slot = p.inventory[p.selected];
-        if (!slot || slot.type !== type || slot.count < 1) {
-            socket.emit('revertPlace', { x, y, z });
-            return;
+        if (!p || p.dead) return;
+        
+        const pickup = pickups.get(id);
+        if (pickup) {
+            const dist = Math.hypot(pickup.x - p.pos.x, pickup.y - p.pos.y, pickup.z - p.pos.z);
+            if (dist < 3) {
+                p.currency[pickup.type]++;
+                pickups.delete(id);
+                io.emit('removePickup', id);
+                socket.emit('currencyUpdate', p.currency);
+            }
         }
-        const dist = Math.hypot(
-            p.pos.x - (x + 0.5),
-            (p.pos.y - (p.crouch ? 1.3 : 1.6)) - (y + 0.5),
-            p.pos.z - (z + 0.5)
-        );
-        if (dist > 5) {
-            socket.emit('revertPlace', { x, y, z });
-            return;
-        }
-        slot.count--;
-        if (slot.count === 0) p.inventory[p.selected] = null;
-        addBlock(x, y, z, type);
-        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
-    });
-
-    socket.on('buyAttempt', (btype) => {
-        const data = BLOCK_TYPES[btype];
-        if (!data) {
-            socket.emit('buyFailed');
-            return;
-        }
-        const p = players.get(socket.id);
-        if (!canAfford(p.currency, data.cost)) {
-            socket.emit('buyFailed');
-            return;
-        }
-        if (!addToInventory(p.inventory, btype, data.buyAmount)) {
-            socket.emit('buyFailed');
-            return;
-        }
-        deductCurrency(p.currency, data.cost);
-        socket.emit('updateCurrency', { ...p.currency });
-        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
     });
 
     socket.on('disconnect', () => {
-        console.log(`Disconnected: ${socket.id}`);
+        console.log('User disconnected:', socket.id);
+        const p = players.get(socket.id);
+        if (p && p.team) {
+            p.team.owner = null; // Free up the island
+        }
         players.delete(socket.id);
         io.emit('removePlayer', socket.id);
     });
 });
 
-// Game loop (spawns + player sync)
+// --- Game Loop (Spawners) ---
 setInterval(() => {
     const now = Date.now();
-    spawners.forEach((s) => {
-        if (now - s.lastSpawn >= s.interval) {
-            spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
+    spawners.forEach(s => {
+        if (now - s.lastSpawn > s.interval) {
+            // Limit Check
+            if (getDropCountForSpawner(s.id) < MAX_DROPS_PER_SPAWNER) {
+                const id = Math.random().toString(36).substr(2, 9);
+                const pickup = { x: s.x, y: s.y, z: s.z, type: s.type, spawnerId: s.id };
+                pickups.set(id, pickup);
+                io.emit('addPickup', { id, ...pickup });
+            }
             s.lastSpawn = now;
         }
     });
-
-    // Sync players (20 FPS)
-    const states = Array.from(players.values()).map((p, idx) => {
-        const id = Array.from(players.keys())[idx];
-        return { id, pos: p.pos, rot: p.rot, crouch: p.crouch };
-    });
-    io.emit('playersUpdate', states);
-}, 50);
+}, 100);
