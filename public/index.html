@@ -211,7 +211,7 @@
             color: #ffff88 !important;
         }
 
-        /* NEW: Loading Screen for Cold Starts */
+        /* Loading Screen for Cold Starts */
         #loading {
             position: absolute;
             top: 0;
@@ -242,10 +242,10 @@
             z-index: 15;
         }
 
-        /* Timer */
+        /* Timer Display */
         #timer {
             position: absolute;
-            top: 20px;
+            top: 10px;
             left: 50%;
             transform: translateX(-50%);
             color: white;
@@ -257,9 +257,11 @@
             border-radius: 10px;
             display: none;
             z-index: 15;
+            min-width: 120px;
+            text-align: center;
         }
 
-        /* Waiting Message */
+        /* Waiting for Players Message */
         #waiting-message {
             position: absolute;
             top: 50%;
@@ -290,6 +292,18 @@
             display: none;
             z-index: 15;
         }
+
+        /* Spectator Controls Hint */
+        #spectator-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: #ccc;
+            font-size: 12px;
+            text-align: right;
+            text-shadow: 1px 1px 2px black;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -318,6 +332,12 @@
         B: Shop<br>
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span>
+    </div>
+    <div id="spectator-controls">
+        SPECTATOR CONTROLS<br>
+        WASD: Move | SPACE: Ascend<br>
+        SHIFT: Descend | B: Shop<br>
+        Free flight mode enabled
     </div>
     <div id="break-progress">
         <div id="break-progress-bar"></div>
@@ -387,7 +407,6 @@
 
         // Spectator state
         let isSpectator = false;
-        let spectatorFly = false;
 
         let playerId = null;
         let blocksMeshes = new Map();
@@ -397,6 +416,9 @@
         // Timer state
         let roundEndTime = null;
         let timerInterval = null;
+
+        // Spectator movement state
+        const spectatorMoveState = { fwd: false, bwd: false, l: false, r: false, up: false, down: false };
 
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
@@ -602,10 +624,7 @@
         const moveState = { fwd: false, bwd: false, l: false, r: false };
         let onGround = false;
 
-        // Spectator movement state
-        const spectatorMoveState = { fwd: false, bwd: false, l: false, r: false, up: false, down: false };
-
-        // Event listeners for non-spectator and spectator
+        // Event listeners
         document.addEventListener('keydown', (e) => {
             if(e.code === 'KeyB') toggleShop();
             if(document.getElementById('shop').style.display === 'block') return;
@@ -1256,6 +1275,25 @@
             }
         }
 
+        function setSpectatorMode(isSpectatorMode) {
+            isSpectator = isSpectatorMode;
+            if (isSpectator) {
+                document.getElementById('spectator-indicator').style.display = 'block';
+                document.getElementById('spectator-controls').style.display = 'block';
+                document.getElementById('hotbar-container').style.display = 'none';
+                document.getElementById('stats').style.display = 'none';
+                document.getElementById('crosshair').style.display = 'none';
+                document.getElementById('controls-hint').style.display = 'none';
+            } else {
+                document.getElementById('spectator-indicator').style.display = 'none';
+                document.getElementById('spectator-controls').style.display = 'none';
+                document.getElementById('hotbar-container').style.display = 'flex';
+                document.getElementById('stats').style.display = 'block';
+                document.getElementById('crosshair').style.display = 'block';
+                document.getElementById('controls-hint').style.display = 'block';
+            }
+        }
+
         // Socket events
         socket.on('yourId', (id) => {
             playerId = id;
@@ -1264,7 +1302,7 @@
         socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, gameState: initialState, timeLeft }) => {
             blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             pickups.forEach(addPickupMesh);
-            // Only add spawners if the game is playing (they will be added when the game starts)
+            // Only add spawners if the game is playing
             if (initialState === 'playing') {
                 initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
             }
@@ -1361,6 +1399,7 @@
         socket.on('gameStart', (data) => {
             showNotification('GO!');
             document.getElementById('timer').style.display = 'block';
+            document.getElementById('waiting-message').style.display = 'none';
             roundEndTime = data.roundEndTime;
             // Start updating the timer
             if (timerInterval) clearInterval(timerInterval);
@@ -1398,23 +1437,11 @@
             resourceSpawners.length = 0;
             data.blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             data.pickups.forEach(addPickupMesh);
-            // Only add spawners if the game is playing (they will be added when the game starts)
             // Since this is a reset, the game state is waiting, so we don't add spawners yet.
         });
 
         socket.on('playerReset', (data) => {
-            isSpectator = data.isSpectator;
-            if (isSpectator) {
-                document.getElementById('spectator-indicator').style.display = 'block';
-                document.getElementById('hotbar-container').style.display = 'none';
-                document.getElementById('stats').style.display = 'none';
-                document.getElementById('crosshair').style.display = 'none';
-            } else {
-                document.getElementById('spectator-indicator').style.display = 'none';
-                document.getElementById('hotbar-container').style.display = 'flex';
-                document.getElementById('stats').style.display = 'block';
-                document.getElementById('crosshair').style.display = 'block';
-            }
+            setSpectatorMode(data.isSpectator);
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
             camera.rotation.set(data.rot.pitch, data.rot.yaw, 0);
             inventory = data.inventory;
@@ -1424,11 +1451,7 @@
         });
 
         socket.on('becomeSpectator', (data) => {
-            isSpectator = true;
-            document.getElementById('spectator-indicator').style.display = 'block';
-            document.getElementById('hotbar-container').style.display = 'none';
-            document.getElementById('stats').style.display = 'none';
-            document.getElementById('crosshair').style.display = 'none';
+            setSpectatorMode(true);
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
             velocity.set(0, 0, 0);
             showNotification('You are now a spectator');
