@@ -349,7 +349,184 @@
         <p style="color: #888; margin-top: 20px; font-size: 0.8em;">Press [B] to Close</p>
     </div>
     <div id="notification"></div>
+<script type="module">
+    // ... (all the imports and setup code remains the same)
 
+    // Add this function to disable/enable game mechanics based on game state
+    function updateGameStateControls(isGameActive) {
+        if (!isGameActive) {
+            // Don't allow breaking/placing when game isn't active
+            isBreaking = false;
+            breakingBlock = null;
+            document.getElementById('break-progress').style.display = 'none';
+            document.getElementById('break-progress-bar').style.width = '0%';
+            if (breakingOverlay) {
+                scene.remove(breakingOverlay);
+                breakingOverlay = null;
+            }
+        }
+    }
+
+    // In the animate function, update the breaking logic to check game state
+    function animate() {
+        requestAnimationFrame(animate);
+        const time = performance.now();
+        const delta = Math.min((time - prevTime) / 1000, 0.05);
+        prevTime = time;
+
+        // Breaking logic - only if game is active and not spectator
+        if (!isSpectator && isBreaking && breakingBlock) {
+            const elapsed = Date.now() - breakingStartTime;
+            const progress = Math.min((elapsed / breakingDuration) * 100, 100);
+            document.getElementById('break-progress-bar').style.width = progress + '%';
+
+            if (breakingOverlay && breakingTextures.length > 0) {
+                const textureIndex = Math.floor(progress / 10) - 1;
+                if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
+                    breakingOverlay.material.map = breakingTextures[textureIndex];
+                    breakingOverlay.material.needsUpdate = true;
+                }
+            }
+
+            if (elapsed >= breakingDuration) {
+                const x = Math.floor(breakingBlock.position.x - 0.5);
+                const y = Math.floor(breakingBlock.position.y - 0.5);
+                const z = Math.floor(breakingBlock.position.z - 0.5);
+                socket.emit('breakAttempt', { x, y, z });
+                isBreaking = false;
+                breakingBlock = null;
+                document.getElementById('break-progress').style.display = 'none';
+                document.getElementById('break-progress-bar').style.width = '0%';
+                if (breakingOverlay) {
+                    scene.remove(breakingOverlay);
+                    breakingOverlay = null;
+                }
+            }
+        }
+
+        // ... (rest of the animate function remains the same)
+    }
+
+    // Update the mousedown event to check game state
+    document.addEventListener('mousedown', (e) => {
+        if (isChatting) return;
+        
+        if (!controls.isLocked && !isSpectator) {
+            if(document.getElementById('shop').style.display !== 'block') controls.lock();
+            return;
+        }
+
+        // Don't allow interaction in spectator mode or when game isn't active
+        if (isSpectator) return;
+
+        raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+        const intersects = raycaster.intersectObjects(blocksInScene);
+
+        if (e.button === 2) { // Build
+            const currentSlot = inventory[selectedSlotIndex];
+            if (intersects.length > 0 && currentSlot && currentSlot.count > 0) {
+                const intersect = intersects[0];
+                if (intersect.distance > 5) return;
+                const pos = intersect.point.clone().add(intersect.face.normal.multiplyScalar(0.5));
+
+                const currentEyeHeight = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
+                const currentPlayerHeight = isCrouching ? (PLAYER_HEIGHT - 0.5) : PLAYER_HEIGHT;
+
+                const blockX = Math.floor(pos.x);
+                const blockY = Math.floor(pos.y);
+                const blockZ = Math.floor(pos.z);
+
+                let canPlace = true;
+                const playerFeetY = camera.position.y - currentEyeHeight;
+                const playerHeadY = camera.position.y - currentEyeHeight + currentPlayerHeight;
+                const blockMinY = blockY;
+                const blockMaxY = blockY + 1;
+                if (blockMaxY > playerFeetY && blockMinY < playerHeadY) {
+                    const dx = Math.abs(camera.position.x - (blockX + 0.5));
+                    const dz = Math.abs(camera.position.z - (blockZ + 0.5));
+                    if (dx < PLAYER_RADIUS * 0.6 && dz < PLAYER_RADIUS * 0.6) {
+                        canPlace = false;
+                    }
+                }
+
+                if (canPlace) {
+                    const type = currentSlot.type;
+                    socket.emit('placeAttempt', { x: blockX, y: blockY, z: blockZ, type });
+                }
+            }
+        } else if (e.button === 0) { // Break
+            if (intersects.length > 0) {
+                const obj = intersects[0].object;
+                if (intersects[0].distance > 5) return;
+                if (obj.userData.type !== 'spawner') {
+                    const type = obj.userData.type || 'Grass';
+                    isBreaking = true;
+                    breakingBlock = obj;
+                    breakingStartTime = Date.now();
+                    breakingDuration = BLOCK_TYPES[type].breakTime * 1000;
+                    document.getElementById('break-progress').style.display = 'block';
+                    
+                    if (!breakingOverlay && breakingTextures.length > 0) {
+                        const overlayMaterial = new THREE.MeshBasicMaterial({
+                            map: breakingTextures[0],
+                            transparent: true,
+                            opacity: 0.8,
+                            depthWrite: false
+                        });
+                        breakingOverlay = new THREE.Mesh(
+                            new THREE.BoxGeometry(1.01, 1.01, 1.01),
+                            overlayMaterial
+                        );
+                        breakingOverlay.position.copy(obj.position);
+                        scene.add(breakingOverlay);
+                    }
+                }
+            }
+        }
+    });
+
+    // ... (rest of the code remains the same until socket events)
+
+    // Add a new socket event for game state changes
+    let isGameActive = false;
+
+    socket.on('gameStart', () => {
+        showNotification('GO!');
+        isGameActive = true;
+    });
+
+    socket.on('gameEnd', ({ winner, winnerName }) => {
+        if (winner === playerId) {
+            showNotification('You Win!', 5000);
+        } else {
+            showNotification(`${winnerName} Wins!`, 5000);
+        }
+        isGameActive = false;
+    });
+
+    socket.on('worldReset', (data) => {
+        isGameActive = false;
+        // ... (rest of world reset code)
+    });
+
+    // Update resource pickup collection to check game state
+    for (let i = resourcePickups.length - 1; i >= 0; i--) {
+        const pickup = resourcePickups[i];
+        
+        const floatOffset = Math.sin((now - pickup.userData.spawnTime) / 500) * 0.15;
+        pickup.position.y = pickup.userData.baseY + floatOffset;
+        
+        pickup.lookAt(camera.position);
+
+        const dist = camera.position.distanceTo(pickup.position);
+        if (dist < 1.5 && !isSpectator && isGameActive) {
+            socket.emit('claimPickupAttempt', pickup.userData.id);
+            removePickupMesh(pickup.userData.id);
+        }
+    }
+
+    // ... (rest of the code remains the same)
+</script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script type="importmap">
         {
