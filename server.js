@@ -1,3 +1,4 @@
+// server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -20,7 +21,7 @@ const BLOCK_TYPES = {
     'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
     'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
     'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
-    'Bed': { color: 0xff0000, cost: {}, breakTime: 0.5, buyAmount: 0, hasTexture: false }
+    'Bed': { color: 0xff0000, breakTime: 2, buyAmount: 1, hasTexture: false }
 };
 const MAX_STACK = 64;
 const INVENTORY_SIZE = 9;
@@ -29,9 +30,7 @@ const INVENTORY_SIZE = 9;
 const blocks = new Map(); // `${x},${y},${z}` -> type
 const pickups = new Map(); // id -> {x, y, z, resourceType}
 const spawners = [];
-const players = new Map(); // id -> {pos: {x,y,z}, rot: {yaw, pitch}, crouch: bool, inventory: array, currency: obj, selected: num}
-const beds = new Map(); // blockKey -> playerId
-const unclaimedBedKeys = [];
+const players = new Map(); // id -> {pos: {x,y,z}, rot: {yaw, pitch}, crouch: bool, inventory: array, currency: obj, selected: num, bedPos: {x,y,z}|null, lastRespawn: num}
 
 function blockKey(x, y, z) {
     return `${x},${y},${z}`;
@@ -48,8 +47,17 @@ function addBlock(x, y, z, type) {
 function removeBlock(x, y, z) {
     const key = blockKey(x, y, z);
     if (!blocks.has(key)) return false;
+    const type = blocks.get(key);
     blocks.delete(key);
     io.emit('removeBlock', { x, y, z });
+    if (type === 'Bed') {
+        players.forEach((p, id) => {
+            if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
+                p.bedPos = null;
+                io.to(id).emit('bedDestroyed');
+            }
+        });
+    }
     return true;
 }
 
@@ -103,13 +111,6 @@ function createIsland(offsetX, offsetZ, spawnerType = null) {
             addBlock(offsetX + x, 0, offsetZ + z, 'Grass');
         }
     }
-    // Add bed
-    const bedX = offsetX + 2;
-    const bedY = 1;
-    const bedZ = offsetZ + 2;
-    addBlock(bedX, bedY, bedZ, 'Bed');
-    unclaimedBedKeys.push(blockKey(bedX, bedY, bedZ));
-
     if (spawnerType) {
         const s = {
             x: offsetX + 2.5, y: 1, z: offsetZ + 2.5,
@@ -129,15 +130,12 @@ createIsland(9, -15, { type: 'gold', interval: 8 });
 createIsland(9, 33, { type: 'gold', interval: 8 });
 createIsland(9, 9, { type: 'emerald', interval: 10 });
 
-// Add more islands for players
-createIsland(-40, -40);
-createIsland(-40, 60);
-createIsland(60, -40);
-createIsland(60, 60);
-createIsland(0, -40);
-createIsland(0, 60);
-createIsland(-40, 0);
-createIsland(60, 0);
+const playerIslands = [
+    {offsetX: -15, offsetZ: -15, bedX: -14, bedY: 1, bedZ: -14},
+    {offsetX: 33, offsetZ: -15, bedX: 34, bedY: 1, bedZ: -14},
+    {offsetX: -15, offsetZ: 33, bedX: -14, bedY: 1, bedZ: 34},
+    {offsetX: 33, offsetZ: 33, bedX: 34, bedY: 1, bedZ: 34}
+];
 
 // Socket connections
 io.on('connection', (socket) => {
@@ -148,17 +146,26 @@ io.on('connection', (socket) => {
         crouch: false,
         inventory: new Array(INVENTORY_SIZE).fill(null),
         currency: { iron: 0, gold: 0, emerald: 0 },
-        selected: 0
+        selected: 0,
+        bedPos: null,
+        lastRespawn: 0
     };
 
-    // Assign island/bed if available
-    const bedKey = unclaimedBedKeys.shift();
-    if (bedKey) {
-        const [bx, by, bz] = bedKey.split(',').map(Number);
-        playerState.pos = { x: bx + 0.5, y: by + 2, z: bz + 0.5 };
-        beds.set(bedKey, socket.id);
-    } // else fallback to default pos
-
+    let assigned = false;
+    for (let island of playerIslands) {
+        const key = blockKey(island.bedX, island.bedY, island.bedZ);
+        if (!blocks.has(key)) {
+            addBlock(island.bedX, island.bedY, island.bedZ, 'Bed');
+            playerState.bedPos = {x: island.bedX, y: island.bedY, z: island.bedZ};
+            playerState.pos = {x: island.bedX + 0.5, y: island.bedY + 2, z: island.bedZ + 0.5};
+            assigned = true;
+            break;
+        }
+    }
+    if (!assigned) {
+        playerState.pos = {x: 9 + 2.5, y: 5, z: 9 + 2.5};
+        playerState.bedPos = null;
+    }
     players.set(socket.id, playerState);
 
     // Send initial world
@@ -224,15 +231,11 @@ io.on('connection', (socket) => {
             return;
         }
         const type = blocks.get(key);
-        if (type === 'Bed') {
+        if (addToInventory(p.inventory, type, 1)) {
             removeBlock(x, y, z);
+            socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         } else {
-            if (addToInventory(p.inventory, type, 1)) {
-                removeBlock(x, y, z);
-                socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
-            } else {
-                socket.emit('revertBreak', { x, y, z, type });
-            }
+            socket.emit('revertBreak', { x, y, z, type });
         }
     });
 
@@ -264,8 +267,12 @@ io.on('connection', (socket) => {
     });
 
     socket.on('buyAttempt', (btype) => {
+        if (btype === 'Bed') {
+            socket.emit('buyFailed');
+            return;
+        }
         const data = BLOCK_TYPES[btype];
-        if (!data || data.buyAmount <= 0) {
+        if (!data) {
             socket.emit('buyFailed');
             return;
         }
@@ -283,38 +290,8 @@ io.on('connection', (socket) => {
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
     });
 
-    socket.on('fellOut', () => {
-        const p = players.get(socket.id);
-        let bedKey = null;
-        for (const [key, pid] of beds.entries()) {
-            if (pid === socket.id) {
-                bedKey = key;
-                break;
-            }
-        }
-        if (bedKey && blocks.get(bedKey) === 'Bed') {
-            const [bx, by, bz] = bedKey.split(',').map(Number);
-            const respawnPos = { x: bx + 0.5, y: by + 2, z: bz + 0.5 };
-            p.pos = respawnPos;
-            socket.emit('respawnPos', respawnPos);
-        } else {
-            socket.emit('noRespawn');
-        }
-    });
-
     socket.on('disconnect', () => {
         console.log(`Disconnected: ${socket.id}`);
-        let bedKey = null;
-        for (const [key, pid] of beds.entries()) {
-            if (pid === socket.id) {
-                bedKey = key;
-                beds.delete(key);
-                break;
-            }
-        }
-        if (bedKey && blocks.get(bedKey) === 'Bed') {
-            unclaimedBedKeys.push(bedKey);
-        }
         players.delete(socket.id);
         io.emit('removePlayer', socket.id);
     });
@@ -327,6 +304,25 @@ setInterval(() => {
         if (now - s.lastSpawn >= s.interval) {
             spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
             s.lastSpawn = now;
+        }
+    });
+
+    // Check for death/respawn
+    players.forEach((p, id) => {
+        if (p.pos.y < -30 && now - p.lastRespawn > 2000) {
+            if (p.bedPos && blocks.get(blockKey(p.bedPos.x, p.bedPos.y, p.bedPos.z)) === 'Bed') {
+                p.pos.x = p.bedPos.x + 0.5;
+                p.pos.y = p.bedPos.y + 2;
+                p.pos.z = p.bedPos.z + 0.5;
+                p.rot.yaw = 0;
+                p.rot.pitch = 0;
+                io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
+            } else {
+                io.to(id).emit('noRespawn');
+                const sock = io.sockets.sockets.get(id);
+                if (sock) sock.disconnect(true);
+            }
+            p.lastRespawn = now;
         }
     });
 
