@@ -19,22 +19,16 @@ const BLOCK_TYPES = {
     'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6 },
     'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
     'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
-    'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
-    'Bed': { color: 0xff0000, breakTime: 1 }
+    'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true }
 };
-
 const MAX_STACK = 64;
 const INVENTORY_SIZE = 9;
 
 // State
-const blocks = new Map();
-const pickups = new Map();
+const blocks = new Map(); // `${x},${y},${z}` -> type
+const pickups = new Map(); // id -> {x, y, z, resourceType}
 const spawners = [];
-const players = new Map();
-
-// --- ISLANDS & BEDS ---
-const ISLANDS = [];
-const PLAYER_ISLAND = new Map(); // playerId -> island
+const players = new Map(); // id -> {pos: {x,y,z}, rot: {yaw, pitch}, crouch: bool, inventory: array, currency: obj, selected: num}
 
 function blockKey(x, y, z) {
     return `${x},${y},${z}`;
@@ -64,6 +58,7 @@ function spawnPickup(x, y, z, resourceType) {
 
 function addToInventory(inv, type, amount) {
     let remaining = amount;
+    // Fill existing stacks
     for (let i = 0; i < INVENTORY_SIZE; i++) {
         if (inv[i] && inv[i].type === type && inv[i].count < MAX_STACK) {
             const space = MAX_STACK - inv[i].count;
@@ -73,6 +68,7 @@ function addToInventory(inv, type, amount) {
             if (remaining === 0) return true;
         }
     }
+    // New stacks
     for (let i = 0; i < INVENTORY_SIZE; i++) {
         if (!inv[i]) {
             const add = Math.min(MAX_STACK, remaining);
@@ -97,67 +93,37 @@ function deductCurrency(currency, cost) {
     }
 }
 
-// --- Island Registration ---
-function registerIsland(cx, cz) {
-    ISLANDS.push({
-        cx,
-        cz,
-        owner: null,
-        bedDestroyed: false
-    });
-
-    // Base platform
+// Init world (islands + spawners)
+function createIsland(offsetX, offsetZ, spawnerType = null) {
     for (let x = 0; x < 6; x++) {
         for (let z = 0; z < 6; z++) {
-            addBlock(cx + x, 0, cz + z, 'Grass');
+            addBlock(offsetX + x, 0, offsetZ + z, 'Grass');
         }
     }
-
-    // Bed
-    addBlock(cx + 2, 1, cz + 2, 'Bed');
+    if (spawnerType) {
+        const s = {
+            x: offsetX + 2.5, y: 1, z: offsetZ + 2.5,
+            resourceType: spawnerType.type,
+            interval: spawnerType.interval * 1000,
+            lastSpawn: Date.now()
+        };
+        spawners.push(s);
+    }
 }
 
-// Islands
-registerIsland(-15, -15);
-registerIsland(33, -15);
-registerIsland(-15, 33);
-registerIsland(33, 33);
-
-registerIsland(9, -15);
-registerIsland(9, 33);
-registerIsland(9, 9);
-
-// Spawners
-function createSpawner(x, z, type, interval) {
-    spawners.push({
-        x,
-        y: 1,
-        z,
-        resourceType: type,
-        interval: interval * 1000,
-        lastSpawn: Date.now()
-    });
-}
-
-createSpawner(-12, -12, 'iron', 3);
-createSpawner(36, -12, 'iron', 3);
-createSpawner(-12, 36, 'iron', 3);
-createSpawner(36, 36, 'iron', 3);
-createSpawner(12, -12, 'gold', 8);
-createSpawner(12, 36, 'gold', 8);
-createSpawner(12, 12, 'emerald', 10);
+createIsland(-15, -15, { type: 'iron', interval: 3 });
+createIsland(33, -15, { type: 'iron', interval: 3 });
+createIsland(-15, 33, { type: 'iron', interval: 3 });
+createIsland(33, 33, { type: 'iron', interval: 3 });
+createIsland(9, -15, { type: 'gold', interval: 8 });
+createIsland(9, 33, { type: 'gold', interval: 8 });
+createIsland(9, 9, { type: 'emerald', interval: 10 });
 
 // Socket connections
 io.on('connection', (socket) => {
     console.log(`New connection: ${socket.id}`);
-
-    // Assign island
-    let island = ISLANDS.find(i => i.owner === null) || ISLANDS[0];
-    island.owner = socket.id;
-    PLAYER_ISLAND.set(socket.id, island);
-
     const playerState = {
-        pos: { x: island.cx + 2.5, y: 5, z: island.cz + 2.5 },
+        pos: { x: -12, y: 5, z: -12 },
         rot: { yaw: 0, pitch: 0 },
         crouch: false,
         inventory: new Array(INVENTORY_SIZE).fill(null),
@@ -166,7 +132,7 @@ io.on('connection', (socket) => {
     };
     players.set(socket.id, playerState);
 
-    // Initial world
+    // Send initial world
     const initBlocks = Array.from(blocks, ([key, type]) => {
         const [x, y, z] = key.split(',').map(Number);
         return { x, y, z, type };
@@ -174,18 +140,26 @@ io.on('connection', (socket) => {
     const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
     socket.emit('initWorld', { blocks: initBlocks, pickups: initPickups, spawners });
 
+    // Send your ID
     socket.emit('yourId', socket.id);
 
+    // Send other players
     const otherPlayers = Array.from(players.entries())
         .filter(([id]) => id !== socket.id)
         .map(([id, p]) => ({ id, pos: p.pos, rot: p.rot, crouch: p.crouch }));
     socket.emit('playersSnapshot', otherPlayers);
 
+    // Broadcast new player
     socket.broadcast.emit('newPlayer', { id: socket.id, pos: playerState.pos, rot: playerState.rot, crouch: playerState.crouch });
 
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
-        if (p) Object.assign(p, data);
+        if (p) {
+            p.pos = data.pos;
+            p.rot = data.rot;
+            p.crouch = data.crouch;
+            p.selected = data.selected;
+        }
     });
 
     socket.on('claimPickupAttempt', (id) => {
@@ -193,9 +167,12 @@ io.on('connection', (socket) => {
         const pickup = pickups.get(id);
         const p = players.get(socket.id);
         const dist = Math.hypot(p.pos.x - pickup.x, p.pos.y - pickup.y, p.pos.z - pickup.z);
-        if (dist >= 1.5) return;
-
-        p.currency[pickup.resourceType]++;
+        if (dist >= 1.5) {
+            socket.emit('revertPickup', { id, x: pickup.x, y: pickup.y, z: pickup.z, resourceType: pickup.resourceType });
+            return;
+        }
+        const res = pickup.resourceType;
+        p.currency[res]++;
         pickups.delete(id);
         io.emit('removePickup', id);
         socket.emit('updateCurrency', { ...p.currency });
@@ -203,49 +180,74 @@ io.on('connection', (socket) => {
 
     socket.on('breakAttempt', ({ x, y, z }) => {
         const key = blockKey(x, y, z);
-        if (!blocks.has(key)) return;
-
-        const type = blocks.get(key);
-
-        // Bed logic
-        if (type === 'Bed') {
-            const island = ISLANDS.find(i =>
-                Math.abs(i.cx + 2 - x) <= 3 &&
-                Math.abs(i.cz + 2 - z) <= 3
-            );
-            if (island) island.bedDestroyed = true;
+        if (!blocks.has(key)) {
+            socket.emit('revertBreak', { x, y, z, type: null });
+            return;
         }
-
         const p = players.get(socket.id);
+        const dist = Math.hypot(
+            p.pos.x - (x + 0.5),
+            (p.pos.y - (p.crouch ? 1.3 : 1.6)) - (y + 0.5),
+            p.pos.z - (z + 0.5)
+        );
+        if (dist > 5) {
+            socket.emit('revertBreak', { x, y, z, type: blocks.get(key) });
+            return;
+        }
+        const type = blocks.get(key);
         if (addToInventory(p.inventory, type, 1)) {
             removeBlock(x, y, z);
-            socket.emit('updateInventory', p.inventory);
+            socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        } else {
+            socket.emit('revertBreak', { x, y, z, type });
         }
     });
 
     socket.on('placeAttempt', ({ x, y, z, type }) => {
-        if (blocks.has(blockKey(x, y, z))) return;
-
-        const p = players.get(socket.id);
-        const slot = p.inventory[p.selected];
-        if (!slot || slot.type !== type || slot.count < 1) return;
-
-        slot.count--;
-        if (slot.count === 0) p.inventory[p.selected] = null;
-
-        addBlock(x, y, z, type);
-        socket.emit('updateInventory', p.inventory);
-    });
-
-    socket.on('respawnRequest', () => {
-        const island = PLAYER_ISLAND.get(socket.id);
-        if (!island || island.bedDestroyed) {
-            socket.emit('respawnDenied');
+        const key = blockKey(x, y, z);
+        if (blocks.has(key)) {
+            socket.emit('revertPlace', { x, y, z });
             return;
         }
         const p = players.get(socket.id);
-        p.pos = { x: island.cx + 2.5, y: 5, z: island.cz + 2.5 };
-        socket.emit('respawnAt', p.pos);
+        const slot = p.inventory[p.selected];
+        if (!slot || slot.type !== type || slot.count < 1) {
+            socket.emit('revertPlace', { x, y, z });
+            return;
+        }
+        const dist = Math.hypot(
+            p.pos.x - (x + 0.5),
+            (p.pos.y - (p.crouch ? 1.3 : 1.6)) - (y + 0.5),
+            p.pos.z - (z + 0.5)
+        );
+        if (dist > 5) {
+            socket.emit('revertPlace', { x, y, z });
+            return;
+        }
+        slot.count--;
+        if (slot.count === 0) p.inventory[p.selected] = null;
+        addBlock(x, y, z, type);
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+    });
+
+    socket.on('buyAttempt', (btype) => {
+        const data = BLOCK_TYPES[btype];
+        if (!data) {
+            socket.emit('buyFailed');
+            return;
+        }
+        const p = players.get(socket.id);
+        if (!canAfford(p.currency, data.cost)) {
+            socket.emit('buyFailed');
+            return;
+        }
+        if (!addToInventory(p.inventory, btype, data.buyAmount)) {
+            socket.emit('buyFailed');
+            return;
+        }
+        deductCurrency(p.currency, data.cost);
+        socket.emit('updateCurrency', { ...p.currency });
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
     });
 
     socket.on('disconnect', () => {
@@ -255,27 +257,20 @@ io.on('connection', (socket) => {
     });
 });
 
-// Game loop
+// Game loop (spawns + player sync)
 setInterval(() => {
     const now = Date.now();
     spawners.forEach((s) => {
         if (now - s.lastSpawn >= s.interval) {
-
-            // LIMIT resources to 64
-            const count = Array.from(pickups.values())
-                .filter(p => p.resourceType === s.resourceType)
-                .length;
-
-            if (count < 64) {
-                spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
-            }
-
+            spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
             s.lastSpawn = now;
         }
     });
 
-    const states = Array.from(players.entries()).map(([id, p]) =>
-        ({ id, pos: p.pos, rot: p.rot, crouch: p.crouch })
-    );
+    // Sync players (20 FPS)
+    const states = Array.from(players.values()).map((p, idx) => {
+        const id = Array.from(players.keys())[idx];
+        return { id, pos: p.pos, rot: p.rot, crouch: p.crouch };
+    });
     io.emit('playersUpdate', states);
 }, 50);
