@@ -309,48 +309,24 @@
             text-shadow: 1px 1px 2px black;
             display: none;
         }
-
-        /* Main Menu */
-        #main-menu {
+        
+        /* Lobby Message */
+        #lobby-message {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 50;
-        }
-
-        .menu-button {
-            background: #4d9043;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            margin: 10px;
-            font-size: 18px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.3s;
-            min-width: 200px;
-        }
-
-        .menu-button:hover {
-            background: #5da052;
-        }
-
-        .menu-button:disabled {
-            background: #777;
-            cursor: not-allowed;
-        }
-
-        #player-count {
-            font-size: 20px;
-            margin-bottom: 20px;
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px black;
+            background: rgba(0,0,0,0.7);
+            padding: 20px 30px;
+            border-radius: 15px;
+            display: none;
+            z-index: 15;
+            text-align: center;
+            max-width: 600px;
         }
         
         /* Click to start prompt */
@@ -373,16 +349,6 @@
 <body>
     <div id="loading">Connecting to server...</div>
     
-    <div id="main-menu">
-        <h1>ISLAND BUILDER</h1>
-        <div id="player-count">Players: 0/4</div>
-        <button id="join-game-btn" class="menu-button" onclick="joinGame()">JOIN GAME</button>
-        <button id="spectate-btn" class="menu-button" onclick="spectate()">SPECTATE</button>
-        <div id="waiting-players" style="display: none; margin-top: 20px; font-size: 18px;">
-            Waiting for players to join...
-        </div>
-    </div>
-    
     <div id="crosshair"></div>
     <div id="stats">
         <div class="currency-row">
@@ -400,6 +366,7 @@
     </div>
     <div id="timer"></div>
     <div id="waiting-message"></div>
+    <div id="lobby-message"></div>
     <div id="spectator-indicator">SPECTATOR MODE</div>
     <div id="controls-hint">
         WASD: Move | SPACE: Jump<br>
@@ -454,7 +421,6 @@
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
-        const ISLAND_GAP = 18;
 
         // --- State ---
         let currency = { iron: 0, gold: 0, emerald: 0 };
@@ -493,7 +459,7 @@
 
         // Pointer lock state
         let isPointerLocked = false;
-        let waitingForClickToStart = false;
+        let waitingForClickToStart = true;
 
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
@@ -507,8 +473,8 @@
         sun.position.set(20, 50, 20);
         scene.add(sun);
 
-        // Initialize controls but don't lock yet
-        camera.position.set(9 + 2.5, 20, 9 + 2.5);
+        // Initialize controls
+        camera.position.set(0, 5, 0);
         const controls = new PointerLockControls(camera, document.body);
         const velocity = new THREE.Vector3();
         const moveState = { fwd: false, bwd: false, l: false, r: false };
@@ -702,10 +668,8 @@
 
         // Event listeners
         document.addEventListener('keydown', (e) => {
-            // Don't process game keys if menu is visible or pointer isn't locked
-            if (document.getElementById('main-menu').style.display !== 'none' || !isPointerLocked) {
-                return;
-            }
+            // Don't process game keys if pointer isn't locked
+            if (!isPointerLocked) return;
             
             if(e.code === 'KeyB') toggleShop();
             if(document.getElementById('shop').style.display === 'block') return;
@@ -758,10 +722,8 @@
         });
 
         document.addEventListener('keyup', (e) => {
-            // Don't process game keys if menu is visible or pointer isn't locked
-            if (document.getElementById('main-menu').style.display !== 'none' || !isPointerLocked) {
-                return;
-            }
+            // Don't process game keys if pointer isn't locked
+            if (!isPointerLocked) return;
             
             // Spectator movement
             if (isSpectator) {
@@ -794,7 +756,7 @@
 
         // Function to start pointer lock when user clicks
         function startPointerLock() {
-            if (!isPointerLocked && document.getElementById('main-menu').style.display === 'none') {
+            if (!isPointerLocked) {
                 controls.lock();
                 return true;
             }
@@ -811,11 +773,6 @@
         });
 
         document.addEventListener('mousedown', (e) => {
-            // Don't process game input if menu is visible
-            if (document.getElementById('main-menu').style.display !== 'none') {
-                return;
-            }
-            
             // If pointer isn't locked yet, try to lock it
             if (!isPointerLocked) {
                 startPointerLock();
@@ -909,12 +866,13 @@
         // Pointer lock change events
         controls.addEventListener('lock', () => {
             isPointerLocked = true;
+            document.getElementById('click-to-start').style.display = 'none';
         });
 
         controls.addEventListener('unlock', () => {
             isPointerLocked = false;
-            // Don't show click to start if menu is visible
-            if (document.getElementById('main-menu').style.display === 'none') {
+            // Show click to start if we're not in game
+            if (isSpectator) {
                 document.getElementById('click-to-start').style.display = 'block';
             }
         });
@@ -988,13 +946,15 @@
 
             const now = Date.now();
 
-            // Spawners animation
-            resourceSpawners.forEach(spawner => {
-                const pulseSpeed = 2;
-                const pulseAmount = 0.1;
-                const scale = 1 + Math.sin(now / 200 * pulseSpeed) * pulseAmount;
-                spawner.scale.set(scale, scale, scale);
-            });
+            // Spawners animation (only if game is playing)
+            if (!isSpectator) {
+                resourceSpawners.forEach(spawner => {
+                    const pulseSpeed = 2;
+                    const pulseAmount = 0.1;
+                    const scale = 1 + Math.sin(now / 200 * pulseSpeed) * pulseAmount;
+                    spawner.scale.set(scale, scale, scale);
+                });
+            }
 
             // Resource pickups animation
             for (let i = resourcePickups.length - 1; i >= 0; i--) {
@@ -1427,23 +1387,10 @@
             }
         }
 
-        function joinGame() {
-            socket.emit('joinGame');
-            document.getElementById('join-game-btn').disabled = true;
-            document.getElementById('spectate-btn').disabled = true;
-            document.getElementById('waiting-players').style.display = 'block';
-        }
-
-        function spectate() {
-            setSpectatorMode(true);
-            document.getElementById('main-menu').style.display = 'none';
-            waitingForClickToStart = true;
-            document.getElementById('click-to-start').style.display = 'block';
-        }
-
         // Socket events
         socket.on('connect', () => {
             document.getElementById('loading').style.display = 'none';
+            document.getElementById('click-to-start').style.display = 'block';
         });
 
         socket.on('yourId', (id) => {
@@ -1461,10 +1408,9 @@
                 if (timeLeft) {
                     updateTimerDisplay(timeLeft);
                 }
-                document.getElementById('main-menu').style.display = 'none';
                 setSpectatorMode(true);
-                waitingForClickToStart = true;
-                document.getElementById('click-to-start').style.display = 'block';
+            } else {
+                setSpectatorMode(true);
             }
         });
 
@@ -1547,22 +1493,33 @@
 
         socket.on('countdown', (sec) => {
             showNotification(`Starting in ${sec}`, 1100);
+            document.getElementById('lobby-message').innerHTML = `Game starting in ${sec} seconds!<br>Get ready!`;
+            document.getElementById('lobby-message').style.display = 'block';
         });
 
         socket.on('gameStart', (data) => {
             showNotification('GO!');
             document.getElementById('timer').style.display = 'block';
-            document.getElementById('main-menu').style.display = 'none';
+            document.getElementById('lobby-message').style.display = 'none';
             document.getElementById('waiting-message').style.display = 'none';
-            roundEndTime = data.roundEndTime;
-            // Start updating the timer
-            if (timerInterval) clearInterval(timerInterval);
-            timerInterval = setInterval(() => {
-                if (roundEndTime) {
-                    const timeLeft = roundEndTime - Date.now();
-                    updateTimerDisplay(timeLeft);
-                }
-            }, 1000);
+            
+            if (data.pos && data.bedPos) {
+                // This is the personal game start message
+                setSpectatorMode(false);
+                camera.position.set(data.pos.x, data.pos.y, data.pos.z);
+                velocity.set(0, 0, 0);
+            } else {
+                // This is the global game start message
+                roundEndTime = data.roundEndTime;
+                // Start updating the timer
+                if (timerInterval) clearInterval(timerInterval);
+                timerInterval = setInterval(() => {
+                    if (roundEndTime) {
+                        const timeLeft = roundEndTime - Date.now();
+                        updateTimerDisplay(timeLeft);
+                    }
+                }, 1000);
+            }
         });
 
         socket.on('gameEnd', ({ winner }) => {
@@ -1579,11 +1536,6 @@
             } else {
                 showNotification('GAME OVER!', 5000);
             }
-            
-            // Reset after 5 seconds
-            setTimeout(() => {
-                resetGame();
-            }, 5000);
         });
 
         socket.on('worldReset', (data) => {
@@ -1600,15 +1552,11 @@
             data.spawners.forEach((s) => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
             
             // Reset UI
-            document.getElementById('main-menu').style.display = 'flex';
-            document.getElementById('join-game-btn').disabled = false;
-            document.getElementById('spectate-btn').disabled = false;
-            document.getElementById('waiting-players').style.display = 'none';
             setSpectatorMode(true);
-            isPointerLocked = false;
+            camera.position.set(0, 5, 0);
             controls.unlock();
-            document.getElementById('click-to-start').style.display = 'none';
-            waitingForClickToStart = false;
+            waitingForClickToStart = true;
+            document.getElementById('click-to-start').style.display = 'block';
         });
 
         socket.on('playerReset', (data) => {
@@ -1631,41 +1579,19 @@
         });
 
         socket.on('waitingForPlayers', (playersNeeded) => {
-            const playerCountEl = document.getElementById('player-count');
-            const waitingEl = document.getElementById('waiting-players');
-            
+            const waitingEl = document.getElementById('lobby-message');
             if (playersNeeded > 0) {
-                playerCountEl.textContent = `Players: ${2-playersNeeded}/4`;
-                waitingEl.textContent = `Waiting for ${playersNeeded} more player${playersNeeded > 1 ? 's' : ''}...`;
+                waitingEl.innerHTML = `LOBBY<br>Waiting for ${playersNeeded} more player${playersNeeded > 1 ? 's' : ''}...`;
                 waitingEl.style.display = 'block';
             } else {
-                playerCountEl.textContent = `Players: 2/4`;
-                waitingEl.textContent = 'Game starting soon...';
+                waitingEl.innerHTML = 'LOBBY<br>Game starting soon...';
+                waitingEl.style.display = 'block';
             }
-        });
-
-        socket.on('assignIsland', (data) => {
-            camera.position.set(data.pos.x, data.pos.y, data.pos.z);
-            setSpectatorMode(false);
-            document.getElementById('main-menu').style.display = 'none';
-            waitingForClickToStart = true;
-            document.getElementById('click-to-start').style.display = 'block';
-        });
-
-        socket.on('joinGameSuccess', () => {
-            // Player successfully joined game, waiting for countdown
-            document.getElementById('waiting-players').textContent = 'Waiting for more players...';
         });
 
         socket.on('timeUpdate', (timeLeft) => {
             updateTimerDisplay(timeLeft);
         });
-
-        // Reset game function
-        function resetGame() {
-            // This is called from gameEnd event
-            socket.emit('leaveGame');
-        }
 
         selectSlot(0);
         updateUI();
