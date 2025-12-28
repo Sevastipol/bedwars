@@ -54,50 +54,6 @@
             image-rendering: pixelated;
         }
 
-        /* Death Screen */
-        #death-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.8);
-            color: white;
-            display: none;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            z-index: 100;
-        }
-
-        #death-message {
-            font-size: 24px;
-            margin: 20px 0;
-        }
-
-        #respawn-btn {
-            padding: 15px 30px;
-            font-size: 20px;
-            background: #4d9043;
-            border: none;
-            color: white;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-
-        #respawn-btn:hover {
-            background: #5da054;
-        }
-
-        /* Notifications */
-        #notification-container {
-            position: absolute;
-            top: 100px;
-            right: 20px;
-            z-index: 50;
-            max-width: 300px;
-        }
-
         /* Item Name Overlay (Minecraft Style) */
         #item-name-overlay {
             position: absolute;
@@ -254,7 +210,7 @@
             color: #ffff88 !important;
         }
 
-        /* Loading Screen for Cold Starts */
+        /* NEW: Loading Screen for Cold Starts */
         #loading {
             position: absolute;
             top: 0;
@@ -269,28 +225,10 @@
             font-size: 24px;
             z-index: 100;
         }
-
-        /* Animation keyframes */
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        
-        @keyframes slideOut {
-            from { transform: translateX(0); opacity: 1; }
-            to { transform: translateX(100%); opacity: 0; }
-        }
     </style>
 </head>
 <body>
     <div id="loading">Connecting to server...</div>
-    
-    <div id="death-screen">
-        <h1 style="color: #ff4444; font-size: 48px;">YOU DIED</h1>
-        <p id="death-message"></p>
-        <button id="respawn-btn">Press R to Respawn</button>
-    </div>
-    
     <div id="crosshair"></div>
     <div id="stats">
         <div class="currency-row">
@@ -305,29 +243,19 @@
             <img src="https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png" class="currency-icon">
             <span id="emerald">0</span>
         </div>
-        <div class="currency-row">
-            <span style="color: #ff4444">❤</span>
-            <span id="health">100</span>
-        </div>
     </div>
-    
-    <div id="notification-container"></div>
-    
     <div id="controls-hint">
         WASD: Move | SPACE: Jump<br>
         <span id="crouch-hint">SHIFT: Crouch</span> | 1-9: Select<br>
-        B: Shop | R: Respawn<br>
+        B: Shop<br>
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span>
     </div>
-    
     <div id="break-progress">
         <div id="break-progress-bar"></div>
     </div>
-    
     <div id="item-name-overlay"></div>
     <div id="hotbar-container"></div>
-    
     <div id="shop">
         <h2>Construction Shop</h2>
         <div style="color: #aaa; font-size: 0.9em; margin-bottom: 10px;">Click to buy blocks</div>
@@ -348,7 +276,7 @@
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        const socket = io({ reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 1000 });
+        const socket = io({ reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 1000 });  // Updated with reconnection
 
         // Hide loading when connected
         socket.on('connect', () => {
@@ -365,14 +293,13 @@
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
+        const ISLAND_GAP = 18;
 
         // --- State ---
         let currency = { iron: 0, gold: 0, emerald: 0 };
         let inventory = new Array(INVENTORY_SIZE).fill(null);
         let selectedSlotIndex = 0;
         let overlayTimeout;
-        let health = 100;
-        let isDead = false;
 
         const blocksInScene = [];
         const resourceSpawners = [];
@@ -389,11 +316,9 @@
         let isCrouching = false;
 
         let playerId = null;
-        let blocksMeshes = new Map();
-        let pickupMeshes = new Map();
-        let otherPlayers = new Map();
-        let bedPosition = null;
-        let hasBed = true;
+        let blocksMeshes = new Map();  // key -> mesh (for fast remove)
+        let pickupMeshes = new Map();  // id -> mesh
+        let otherPlayers = new Map();  // id -> {group, targetPos, targetRot}
 
         // --- Three.js Setup ---
         const scene = new THREE.Scene();
@@ -417,7 +342,6 @@
         let goldTexture = null;
         let emeraldTexture = null;
         let breakingTextures = [];
-        let bedTexture = null;
 
         textureLoader.load('https://i.ibb.co/394nfmMz/pixilart-drawing-3.png', (texture) => {
             texture.magFilter = THREE.NearestFilter;
@@ -469,13 +393,7 @@
             emeraldTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/5x7zYt7h/pixilart-drawing-9.png', (texture) => {
-            texture.magFilter = THREE.NearestFilter;
-            texture.minFilter = THREE.NearestFilter;
-            bedTexture = texture;
-        });
-
-        // Load breaking textures
+        // Load breaking textures (unchanged)
         const breakingTextureUrls = [
             'https://i.ibb.co/hxcqsNSc/pixil-frame-0.png',
             'https://i.ibb.co/9ms6601B/pixil-frame-0-1.png',
@@ -508,25 +426,6 @@
         function addBlockMesh(x, y, z, type) {
             const blockData = BLOCK_TYPES[type];
             let material;
-            
-            if (type === 'Bed') {
-                // Special bed block
-                const bedGeometry = new THREE.BoxGeometry(1, 0.4, 1);
-                if (bedTexture) {
-                    material = new THREE.MeshLambertMaterial({ map: bedTexture });
-                } else {
-                    material = new THREE.MeshLambertMaterial({ color: 0xff4444 });
-                }
-                const voxel = new THREE.Mesh(bedGeometry, material);
-                voxel.position.set(x + 0.5, y + 0.2, z + 0.5);
-                voxel.userData = { type: type };
-                scene.add(voxel);
-                blocksInScene.push(voxel);
-                const key = `${x},${y},${z}`;
-                blocksMeshes.set(key, voxel);
-                return voxel;
-            }
-            
             if (type === 'Grass' && grassTexture) {
                 material = new THREE.MeshLambertMaterial({ map: grassTexture });
             } else if (type === 'Wood' && woodTexture) {
@@ -536,13 +435,8 @@
             } else if (type === 'Obsidian' && obsidianTexture) {
                 material = new THREE.MeshLambertMaterial({ map: obsidianTexture });
             } else {
-                material = new THREE.MeshLambertMaterial({ 
-                    color: blockData.color, 
-                    transparent: !!blockData.opacity, 
-                    opacity: blockData.opacity || 1 
-                });
+                material = new THREE.MeshLambertMaterial({ color: blockData.color, transparent: !!blockData.opacity, opacity: blockData.opacity || 1 });
             }
-            
             const voxel = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
             voxel.position.set(x + 0.5, y + 0.5, z + 0.5);
             voxel.userData = { type: type };
@@ -577,7 +471,7 @@
                 })
             );
             spawner.position.set(x, y, z);
-            spawner.userData = { type: 'spawner', resourceType: resourceType };
+            spawner.userData = { type: 'spawner', resourceType: resourceType, lastSpawn: Date.now(), interval: interval * 1000 };
             scene.add(spawner);
             resourceSpawners.push(spawner);
         }
@@ -592,23 +486,17 @@
             else if (data.resourceType === 'emerald') texture = emeraldTexture;
 
             const materials = [
-                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 }),
-                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 }),
-                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 }),
-                new THREE.MeshBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.3 }),
-                texture ? new THREE.MeshBasicMaterial({ map: texture, transparent: true }) : new THREE.MeshBasicMaterial({ color: 0x888888 }),
-                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 })
+                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 }), // right
+                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 }), // left
+                new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 }), // top
+                new THREE.MeshBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.3 }), // bottom
+                texture ? new THREE.MeshBasicMaterial({ map: texture, transparent: true }) : new THREE.MeshBasicMaterial({ color: 0x888888 }), // front
+                new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.3 })  // back
             ];
 
             const pickup = new THREE.Mesh(geometry, materials);
             pickup.position.set(data.x, data.y, data.z);
-            pickup.userData = { 
-                type: 'resource_pickup', 
-                resourceType: data.resourceType, 
-                spawnTime: Date.now(), 
-                baseY: data.y, 
-                id: data.id 
-            };
+            pickup.userData = { type: 'resource_pickup', resourceType: data.resourceType, spawnTime: Date.now(), baseY: data.y, id: data.id };
             scene.add(pickup);
             resourcePickups.push(pickup);
             pickupMeshes.set(data.id, pickup);
@@ -624,25 +512,20 @@
             }
         }
 
-        // --- Physics & Controls ---
+        // --- Physics & Controls --- (unchanged)
         const PLAYER_HEIGHT = 1.8;
         const EYE_HEIGHT = 1.6;
         const CROUCH_HEIGHT = 1.3;
         const PLAYER_RADIUS = 0.4;
 
-        camera.position.set(0, 10, 0);
+        camera.position.set(-12, 5, -12);
         const controls = new PointerLockControls(camera, document.body);
         const velocity = new THREE.Vector3();
         const moveState = { fwd: false, bwd: false, l: false, r: false };
         let onGround = false;
 
-        // Event listeners
+        // Event listeners (unchanged)
         document.addEventListener('keydown', (e) => {
-            if (e.code === 'KeyR' && isDead) {
-                socket.emit('respawnRequest');
-                return;
-            }
-            
             if(e.code === 'KeyB') toggleShop();
             if(document.getElementById('shop').style.display === 'block') return;
 
@@ -733,9 +616,10 @@
                     if (canPlace) {
                         const type = currentSlot.type;
                         socket.emit('placeAttempt', { x: blockX, y: blockY, z: blockZ, type });
+                        // Removed optimistic addBlockMesh
                     }
                 }
-            } else if (e.button === 0) { // Break
+            } else if (e.button === 0) { // Break (unchanged)
                 if (intersects.length > 0) {
                     const obj = intersects[0].object;
                     if (intersects[0].distance > 5) return;
@@ -744,7 +628,7 @@
                         isBreaking = true;
                         breakingBlock = obj;
                         breakingStartTime = Date.now();
-                        breakingDuration = BLOCK_TYPES[type] ? BLOCK_TYPES[type].breakTime * 1000 : 2000;
+                        breakingDuration = BLOCK_TYPES[type].breakTime * 1000;
                         document.getElementById('break-progress').style.display = 'block';
                         
                         if (!breakingOverlay && breakingTextures.length > 0) {
@@ -781,7 +665,7 @@
 
         document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Collision functions
+        // Collision functions unchanged
         function checkCollision(pos) {
             const currentEyeHeight = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
             const currentPlayerHeight = isCrouching ? (PLAYER_HEIGHT - 0.5) : PLAYER_HEIGHT;
@@ -818,7 +702,7 @@
             const delta = Math.min((time - prevTime) / 1000, 0.05);
             prevTime = time;
 
-            // Breaking logic
+            // Breaking logic 
             if (isBreaking && breakingBlock) {
                 const elapsed = Date.now() - breakingStartTime;
                 const progress = Math.min((elapsed / breakingDuration) * 100, 100);
@@ -837,6 +721,7 @@
                     const y = Math.floor(breakingBlock.position.y - 0.5);
                     const z = Math.floor(breakingBlock.position.z - 0.5);
                     socket.emit('breakAttempt', { x, y, z });
+                    // Removed optimistic removeBlockMesh
                     isBreaking = false;
                     breakingBlock = null;
                     document.getElementById('break-progress').style.display = 'none';
@@ -850,7 +735,7 @@
 
             const now = Date.now();
 
-            // Spawners animation
+            // Spawners unchanged
             resourceSpawners.forEach(spawner => {
                 const pulseSpeed = 2;
                 const pulseAmount = 0.1;
@@ -869,16 +754,16 @@
                 // Billboard: always face the camera on the front face
                 pickup.lookAt(camera.position);
 
-                // Collection
+                // Collection unchanged
                 const dist = camera.position.distanceTo(pickup.position);
                 if (dist < 1.5) {
                     socket.emit('claimPickupAttempt', pickup.userData.id);
-                    removePickupMesh(pickup.userData.id);
+                    removePickupMesh(pickup.userData.id); // Optimistic for pickups kept
                 }
             }
 
-            // Movement and physics
-            if (controls.isLocked && !isDead) {
+            // Movement and physics unchanged
+            if (controls.isLocked) {
                 velocity.y -= 20.0 * delta;
 
                 const direction = new THREE.Vector3();
@@ -932,14 +817,13 @@
                 }
 
                 if (camera.position.y < -30) {
-                    socket.emit('damagePlayer', { damage: 10, attackerId: 'fall_damage' });
-                    camera.position.set(bedPosition ? bedPosition.x : 0, bedPosition ? bedPosition.y : 10, bedPosition ? bedPosition.z : 0);
+                    camera.position.set(-12, 10, -12);
                     velocity.y = 0;
                 }
             }
 
             // Player update send
-            if (controls.isLocked && socket.connected && time - lastPlayerUpdate > PLAYER_UPDATE_RATE && !isDead) {
+            if (controls.isLocked && socket.connected && time - lastPlayerUpdate > PLAYER_UPDATE_RATE) {
                 socket.emit('playerUpdate', {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
@@ -951,42 +835,23 @@
 
             // Other players lerp
             otherPlayers.forEach((data) => {
-                if (data.isDead) {
-                    data.group.visible = false;
-                    return;
-                }
-                
-                data.group.visible = true;
                 data.group.position.lerp(new THREE.Vector3(data.targetPos.x, data.targetPos.y, data.targetPos.z), 0.15);
                 data.group.rotation.y = THREE.MathUtils.lerp(data.group.rotation.y || 0, data.targetRot.yaw, 0.15);
-                
                 // Crouch
                 if (data.targetCrouch !== data.crouch) {
                     data.crouch = data.targetCrouch;
                 }
                 data.body.scale.y = data.crouch ? 0.72 : 1;
                 data.head.position.y = data.crouch ? 0.9 : 1.0;
-                data.leftArm.position.y = data.crouch ? 0.65 : 0.7;
-                data.rightArm.position.y = data.crouch ? 0.65 : 0.7;
-                
-                // Update health bar
-                if (data.healthBar) {
-                    data.healthBar.scale.x = data.health / 100;
-                    data.healthBar.material.color.setHex(
-                        data.health > 50 ? 0x00ff00 : 
-                        data.health > 20 ? 0xff9900 : 0xff4444
-                    );
-                    data.healthBar.lookAt(camera.position);
-                }
             });
 
             renderer.render(scene, camera);
         }
 
         let lastPlayerUpdate = 0;
-        const PLAYER_UPDATE_RATE = 50;
+        const PLAYER_UPDATE_RATE = 50;  // ms
 
-        // Inventory functions
+        // Inventory, UI, shop functions unchanged (omitted for brevity, copy from previous version)
         function addToInventory(blockType, amount) {
             for (let i = 0; i < INVENTORY_SIZE; i++) {
                 if (inventory[i] && inventory[i].type === blockType && inventory[i].count < MAX_STACK) {
@@ -1017,6 +882,15 @@
             return amount === 0;
         }
 
+        function removeFromHand() {
+            const slot = inventory[selectedSlotIndex];
+            if (slot) {
+                slot.count--;
+                if (slot.count <= 0) inventory[selectedSlotIndex] = null;
+                updateUI();
+            }
+        }
+
         function selectSlot(index) {
             selectedSlotIndex = index;
             updateUI();
@@ -1025,7 +899,7 @@
             if (slot) {
                 overlay.innerText = slot.type;
                 overlay.style.opacity = '1';
-                overlay.style.color = '#' + (BLOCK_TYPES[slot.type]?.color?.toString(16).padStart(6, '0') || 'ffffff');
+                overlay.style.color = '#' + BLOCK_TYPES[slot.type].color.toString(16).padStart(6, '0');
                 if (overlayTimeout) clearTimeout(overlayTimeout);
                 overlayTimeout = setTimeout(() => { overlay.style.opacity = '0'; }, 2000);
             } else {
@@ -1054,7 +928,7 @@
 
                 if (slot) {
                     const blockData = BLOCK_TYPES[slot.type];
-                    if (blockData && blockData.hasTexture) {
+                    if (blockData.hasTexture) {
                         const icon = document.createElement('img');
                         icon.className = 'block-icon';
                         if (slot.type === 'Grass') icon.src = 'https://i.ibb.co/394nfmMz/pixilart-drawing-3.png';
@@ -1065,8 +939,8 @@
                     } else {
                         const icon = document.createElement('div');
                         icon.className = 'block-icon';
-                        icon.style.backgroundColor = '#' + (blockData?.color?.toString(16).padStart(6, '0') || 'ffffff');
-                        if(blockData?.opacity) icon.style.opacity = blockData.opacity;
+                        icon.style.backgroundColor = '#' + blockData.color.toString(16).padStart(6, '0');
+                        if(blockData.opacity) icon.style.opacity = blockData.opacity;
                         div.appendChild(icon);
                     }
 
@@ -1077,21 +951,6 @@
                 }
 
                 hotbarContainer.appendChild(div);
-            }
-        }
-
-        function updateHealthDisplay(newHealth, newIsDead) {
-            health = newHealth;
-            isDead = newIsDead;
-            
-            document.getElementById('health').innerText = health;
-            const healthColor = health > 50 ? '#4d9043' : health > 20 ? '#ff9900' : '#ff4444';
-            document.getElementById('health').style.color = healthColor;
-            
-            if (isDead) {
-                document.getElementById('death-screen').style.display = 'flex';
-            } else {
-                document.getElementById('death-screen').style.display = 'none';
             }
         }
 
@@ -1135,41 +994,9 @@
             const shop = document.getElementById('shop');
             const isVisible = shop.style.display === 'block';
             shop.style.display = isVisible ? 'none' : 'block';
-            if (isVisible) {
-                controls.lock();
-            } else {
-                renderShop();
-                controls.unlock();
-            }
+            isVisible ? controls.lock() : (renderShop(), controls.unlock());
         }
 
-        // Notification system
-        function showNotification(message, type = 'info') {
-            const container = document.getElementById('notification-container');
-            const notification = document.createElement('div');
-            notification.style.cssText = `
-                background: ${type === 'error' ? '#d32f2f' : type === 'success' ? '#4d9043' : '#1976d2'};
-                color: white;
-                padding: 10px 15px;
-                margin: 5px 0;
-                border-radius: 5px;
-                animation: slideIn 0.3s ease;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            `;
-            notification.innerText = message;
-            container.appendChild(notification);
-            
-            setTimeout(() => {
-                notification.style.animation = 'slideOut 0.3s ease';
-                setTimeout(() => {
-                    if (notification.parentNode) {
-                        notification.parentNode.removeChild(notification);
-                    }
-                }, 300);
-            }, 3000);
-        }
-
-        // Player model functions
         function getPlayerColor(id) {
             let hash = 0;
             for (let i = 0; i < id.length; i++) {
@@ -1184,48 +1011,20 @@
             const group = new THREE.Group();
             group.name = id;
 
-            // Body (more detailed)
-            const bodyGeo = new THREE.BoxGeometry(0.6, 1.0, 0.4);
-            const bodyMat = new THREE.MeshLambertMaterial({ color: getPlayerColor(id) });
-            const body = new THREE.Mesh(bodyGeo, bodyMat);
-            body.position.y = 0.5;
+            // Body
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(0.6, 1.8, 0.6),
+                new THREE.MeshLambertMaterial({ color: getPlayerColor(id) })
+            );
             group.add(body);
 
             // Head
-            const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
-            const headMat = new THREE.MeshLambertMaterial({ color: 0xffdbac });
-            const head = new THREE.Mesh(headGeo, headMat);
-            head.position.y = 1.2;
-            group.add(head);
-
-            // Arms
-            const armGeo = new THREE.BoxGeometry(0.2, 0.6, 0.2);
-            const leftArm = new THREE.Mesh(armGeo, bodyMat);
-            leftArm.position.set(-0.4, 0.7, 0);
-            group.add(leftArm);
-            
-            const rightArm = new THREE.Mesh(armGeo, bodyMat);
-            rightArm.position.set(0.4, 0.7, 0);
-            group.add(rightArm);
-
-            // Legs
-            const legGeo = new THREE.BoxGeometry(0.2, 0.6, 0.2);
-            const leftLeg = new THREE.Mesh(legGeo, bodyMat);
-            leftLeg.position.set(-0.2, 0, 0);
-            group.add(leftLeg);
-            
-            const rightLeg = new THREE.Mesh(legGeo, bodyMat);
-            rightLeg.position.set(0.2, 0, 0);
-            group.add(rightLeg);
-
-            // Health bar above head
-            const healthBar = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.6, 0.08),
-                new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide })
+            const head = new THREE.Mesh(
+                new THREE.BoxGeometry(0.4, 0.4, 0.4),
+                new THREE.MeshLambertMaterial({ color: 0xffdbac })
             );
-            healthBar.position.y = 1.8;
-            healthBar.renderOrder = 1;
-            group.add(healthBar);
+            head.position.y = 1.0;
+            group.add(head);
 
             // Name tag
             const canvas = document.createElement('canvas');
@@ -1235,16 +1034,15 @@
             ctx.fillStyle = 'rgba(0,0,0,0.7)';
             ctx.fillRect(0, 0, 256, 64);
             ctx.fillStyle = 'white';
-            ctx.font = 'bold 20px Arial';
+            ctx.font = 'bold 28px Arial';
             ctx.textAlign = 'center';
-            ctx.fillText(id.substring(0, 8).toUpperCase(), 128, 36);
-            const nameTexture = new THREE.CanvasTexture(canvas);
+            ctx.fillText(id.substring(0, 6).toUpperCase(), 128, 40);
+            const texture = new THREE.CanvasTexture(canvas);
             const nameMesh = new THREE.Mesh(
                 new THREE.PlaneGeometry(1.2, 0.3),
-                new THREE.MeshBasicMaterial({ map: nameTexture, transparent: true, side: THREE.DoubleSide })
+                new THREE.MeshBasicMaterial({ map: texture, transparent: true })
             );
-            nameMesh.position.y = 1.6;
-            nameMesh.renderOrder = 2;
+            nameMesh.position.y = 1.4;
             group.add(nameMesh);
 
             scene.add(group);
@@ -1253,17 +1051,10 @@
                 group,
                 body,
                 head,
-                leftArm,
-                rightArm,
-                leftLeg,
-                rightLeg,
-                healthBar,
                 targetPos: { x: 0, y: 0, z: 0 },
                 targetRot: { yaw: 0, pitch: 0 },
                 targetCrouch: false,
-                crouch: false,
-                health: 100,
-                isDead: false
+                crouch: false
             });
         }
 
@@ -1272,50 +1063,39 @@
             playerId = id;
         });
 
-        socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, bedPosition: initBedPosition }) => {
+        socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners }) => {
             blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             pickups.forEach(addPickupMesh);
-            bedPosition = initBedPosition;
-            
             // Add spawners locally for visuals
             initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
         });
 
         socket.on('playersSnapshot', (others) => {
-            others.forEach(({ id, pos, rot, crouch, health, isDead }) => {
+            others.forEach(({ id, pos, rot, crouch }) => {
                 createOtherPlayer(id);
                 const op = otherPlayers.get(id);
                 op.targetPos = pos;
                 op.targetRot = rot;
                 op.targetCrouch = crouch;
-                op.health = health;
-                op.isDead = isDead;
-                op.group.visible = !isDead;
             });
         });
 
-        socket.on('newPlayer', ({ id, pos, rot, crouch, health, isDead }) => {
+        socket.on('newPlayer', ({ id, pos, rot, crouch }) => {
             createOtherPlayer(id);
             const op = otherPlayers.get(id);
             op.targetPos = pos;
             op.targetRot = rot;
             op.targetCrouch = crouch;
-            op.health = health;
-            op.isDead = isDead;
-            op.group.visible = !isDead;
         });
 
         socket.on('playersUpdate', (states) => {
-            states.forEach(({ id, pos, rot, crouch, health, isDead }) => {
+            states.forEach(({ id, pos, rot, crouch }) => {
                 if (id === playerId) return;
                 const op = otherPlayers.get(id);
                 if (op) {
                     op.targetPos = pos;
                     op.targetRot = rot;
                     op.targetCrouch = crouch;
-                    op.health = health;
-                    op.isDead = isDead;
-                    op.group.visible = !isDead;
                 }
             });
         });
@@ -1330,7 +1110,7 @@
             else removeBlockMesh(x, y, z);
         });
         socket.on('revertPlace', ({ x, y, z }) => removeBlockMesh(x, y, z));
-        socket.on('revertPickup', addPickupMesh);
+        socket.on('revertPickup', addPickupMesh);  // data has id,x,y,z,resourceType
 
         socket.on('updateCurrency', (curr) => {
             currency = curr;
@@ -1340,45 +1120,11 @@
             inventory = inv;
             updateUI();
         });
-        socket.on('updateHealth', ({ health: newHealth, isDead: newIsDead }) => {
-            updateHealthDisplay(newHealth, newIsDead);
+        socket.on('buyFailed', () => {
+            alert('Not enough resources or inventory full!');
+            renderShop();  // Refresh shop UI
         });
-        socket.on('death', ({ message }) => {
-            document.getElementById('death-message').innerText = message;
-            updateHealthDisplay(0, true);
-        });
-        socket.on('respawn', (pos) => {
-            camera.position.set(pos.x, pos.y, pos.z);
-            updateHealthDisplay(100, false);
-        });
-        socket.on('bedDestroyed', () => {
-            hasBed = false;
-            showNotification('Your bed was destroyed! You will respawn at world spawn if you die.', 'warning');
-        });
-        socket.on('notification', ({ message, type }) => {
-            showNotification(message, type);
-        });
-        socket.on('buyFailed', (message) => {
-            showNotification(message || 'Purchase failed!', 'error');
-        });
-        socket.on('playerDied', ({ id, attackerId }) => {
-            if (id === playerId) return;
-            const op = otherPlayers.get(id);
-            if (op) {
-                op.isDead = true;
-                op.group.visible = false;
-            }
-        });
-        socket.on('playerRespawned', ({ id, pos, health }) => {
-            if (id === playerId) return;
-            const op = otherPlayers.get(id);
-            if (op) {
-                op.isDead = false;
-                op.group.visible = true;
-                op.targetPos = pos;
-                op.health = health;
-            }
-        });
+
         socket.on('removePlayer', (id) => {
             const op = otherPlayers.get(id);
             if (op) {
@@ -1387,7 +1133,6 @@
             }
         });
 
-        // Initialize
         selectSlot(0);
         updateUI();
         animate();
@@ -1396,11 +1141,6 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        // Respawn button
-        document.getElementById('respawn-btn').addEventListener('click', () => {
-            socket.emit('respawnRequest');
         });
     </script>
 </body>
