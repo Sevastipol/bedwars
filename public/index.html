@@ -25,6 +25,7 @@
             pointer-events: none;
             mix-blend-mode: difference;
             z-index: 10;
+            display: none;
         }
 
         /* Top Left Stats */
@@ -37,6 +38,7 @@
             padding: 15px;
             border-radius: 10px;
             pointer-events: none;
+            display: none;
         }
 
         .currency-row {
@@ -69,6 +71,7 @@
             transition: opacity 0.5s ease-in-out;
             pointer-events: none;
             z-index: 15;
+            display: none;
         }
 
         /* Breaking Progress Bar */
@@ -104,6 +107,7 @@
             background: rgba(0, 0, 0, 0.3);
             padding: 10px;
             border-radius: 8px;
+            display: none;
         }
 
         .inv-slot {
@@ -205,6 +209,7 @@
             font-size: 12px;
             text-align: right;
             text-shadow: 1px 1px 2px black;
+            display: none;
         }
 
         .crouch-indicator {
@@ -304,10 +309,64 @@
             text-shadow: 1px 1px 2px black;
             display: none;
         }
+
+        /* Main Menu */
+        #main-menu {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+
+        .menu-button {
+            background: #4d9043;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            margin: 10px;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+            min-width: 200px;
+        }
+
+        .menu-button:hover {
+            background: #5da052;
+        }
+
+        .menu-button:disabled {
+            background: #777;
+            cursor: not-allowed;
+        }
+
+        #player-count {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
     <div id="loading">Connecting to server...</div>
+    
+    <div id="main-menu">
+        <h1>ISLAND BUILDER</h1>
+        <div id="player-count">Players: 0/4</div>
+        <button id="join-game-btn" class="menu-button" onclick="joinGame()">JOIN GAME</button>
+        <button id="spectate-btn" class="menu-button" onclick="spectate()">SPECTATE</button>
+        <div id="waiting-players" style="display: none; margin-top: 20px; font-size: 18px;">
+            Waiting for players to join...
+        </div>
+    </div>
+    
     <div id="crosshair"></div>
     <div id="stats">
         <div class="currency-row">
@@ -367,11 +426,6 @@
 
         const socket = io({ reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 1000 });
 
-        // Hide loading when connected
-        socket.on('connect', () => {
-            document.getElementById('loading').style.display = 'none';
-        });
-
         // --- Config ---
         const BLOCK_TYPES = {
             'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true },
@@ -406,7 +460,7 @@
         let isCrouching = false;
 
         // Spectator state
-        let isSpectator = false;
+        let isSpectator = true;
 
         let playerId = null;
         let blocksMeshes = new Map();
@@ -618,7 +672,7 @@
         const CROUCH_HEIGHT = 1.3;
         const PLAYER_RADIUS = 0.4;
 
-        camera.position.set(-12, 5, -12);
+        camera.position.set(9 + 2.5, 20, 9 + 2.5);
         const controls = new PointerLockControls(camera, document.body);
         const velocity = new THREE.Vector3();
         const moveState = { fwd: false, bwd: false, l: false, r: false };
@@ -1283,18 +1337,38 @@
                 document.getElementById('hotbar-container').style.display = 'none';
                 document.getElementById('stats').style.display = 'none';
                 document.getElementById('crosshair').style.display = 'none';
+                document.getElementById('item-name-overlay').style.display = 'none';
                 document.getElementById('controls-hint').style.display = 'none';
+                document.getElementById('break-progress').style.display = 'none';
             } else {
                 document.getElementById('spectator-indicator').style.display = 'none';
                 document.getElementById('spectator-controls').style.display = 'none';
                 document.getElementById('hotbar-container').style.display = 'flex';
                 document.getElementById('stats').style.display = 'block';
                 document.getElementById('crosshair').style.display = 'block';
+                document.getElementById('item-name-overlay').style.display = 'block';
                 document.getElementById('controls-hint').style.display = 'block';
             }
         }
 
+        function joinGame() {
+            socket.emit('joinGame');
+            document.getElementById('join-game-btn').disabled = true;
+            document.getElementById('spectate-btn').disabled = true;
+            document.getElementById('waiting-players').style.display = 'block';
+        }
+
+        function spectate() {
+            setSpectatorMode(true);
+            document.getElementById('main-menu').style.display = 'none';
+            controls.lock();
+        }
+
         // Socket events
+        socket.on('connect', () => {
+            document.getElementById('loading').style.display = 'none';
+        });
+
         socket.on('yourId', (id) => {
             playerId = id;
         });
@@ -1302,16 +1376,17 @@
         socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, gameState: initialState, timeLeft }) => {
             blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             pickups.forEach(addPickupMesh);
-            // Only add spawners if the game is playing
-            if (initialState === 'playing') {
-                initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
-            }
+            initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
+            
             // If the game is already playing, show the timer
             if (initialState === 'playing') {
                 document.getElementById('timer').style.display = 'block';
                 if (timeLeft) {
                     updateTimerDisplay(timeLeft);
                 }
+                document.getElementById('main-menu').style.display = 'none';
+                setSpectatorMode(true);
+                controls.lock();
             }
         });
 
@@ -1399,6 +1474,7 @@
         socket.on('gameStart', (data) => {
             showNotification('GO!');
             document.getElementById('timer').style.display = 'block';
+            document.getElementById('main-menu').style.display = 'none';
             document.getElementById('waiting-message').style.display = 'none';
             roundEndTime = data.roundEndTime;
             // Start updating the timer
@@ -1417,13 +1493,19 @@
                 timerInterval = null;
             }
             document.getElementById('timer').style.display = 'none';
+            
             if (winner === playerId) {
-                showNotification('You Win!', 5000);
+                showNotification('YOU WIN!', 5000);
             } else if (winner) {
-                showNotification(`Player ${winner.substring(0,6)} Wins!`, 5000);
+                showNotification(`PLAYER ${winner.substring(0,6)} WINS!`, 5000);
             } else {
-                showNotification('Game Over! Draw!', 5000);
+                showNotification('GAME OVER!', 5000);
             }
+            
+            // Reset after 5 seconds
+            setTimeout(() => {
+                resetGame();
+            }, 5000);
         });
 
         socket.on('worldReset', (data) => {
@@ -1437,7 +1519,14 @@
             resourceSpawners.length = 0;
             data.blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             data.pickups.forEach(addPickupMesh);
-            // Since this is a reset, the game state is waiting, so we don't add spawners yet.
+            data.spawners.forEach((s) => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
+            
+            // Reset UI
+            document.getElementById('main-menu').style.display = 'flex';
+            document.getElementById('join-game-btn').disabled = false;
+            document.getElementById('spectate-btn').disabled = false;
+            document.getElementById('waiting-players').style.display = 'none';
+            setSpectatorMode(true);
         });
 
         socket.on('playerReset', (data) => {
@@ -1458,13 +1547,29 @@
         });
 
         socket.on('waitingForPlayers', (playersNeeded) => {
-            const waitingEl = document.getElementById('waiting-message');
+            const playerCountEl = document.getElementById('player-count');
+            const waitingEl = document.getElementById('waiting-players');
+            
             if (playersNeeded > 0) {
+                playerCountEl.textContent = `Players: ${2-playersNeeded}/4`;
                 waitingEl.textContent = `Waiting for ${playersNeeded} more player${playersNeeded > 1 ? 's' : ''}...`;
                 waitingEl.style.display = 'block';
             } else {
-                waitingEl.style.display = 'none';
+                playerCountEl.textContent = `Players: 2/4`;
+                waitingEl.textContent = 'Game starting soon...';
             }
+        });
+
+        socket.on('assignIsland', (data) => {
+            camera.position.set(data.pos.x, data.pos.y, data.pos.z);
+            setSpectatorMode(false);
+            document.getElementById('main-menu').style.display = 'none';
+            controls.lock();
+        });
+
+        socket.on('joinGameSuccess', () => {
+            // Player successfully joined game, waiting for countdown
+            document.getElementById('waiting-players').textContent = 'Waiting for more players...';
         });
 
         socket.on('timeUpdate', (timeLeft) => {
