@@ -25,8 +25,7 @@ const BLOCK_TYPES = {
 const MAX_STACK = 64;
 const INVENTORY_SIZE = 9;
 const MAX_RESOURCES_PER_GENERATOR = 64;
-const ISLAND_SPACING = 48;
-const ISLAND_GRID_SIZE = 7;
+const ISLAND_SPACING = 48; // Original spacing from the old islands
 
 // State
 const blocks = new Map(); // `${x},${y},${z}` -> type
@@ -41,13 +40,14 @@ function blockKey(x, y, z) {
 }
 
 function islandKey(x, z) {
+    // Original island grid: 48 blocks apart
     return `${Math.floor((x + 144) / ISLAND_SPACING)},${Math.floor((z + 144) / ISLAND_SPACING)}`;
 }
 
 function getAvailableIsland() {
-    // ISLAND_GRID_SIZE x ISLAND_GRID_SIZE grid of possible islands
-    for (let ix = 0; ix < ISLAND_GRID_SIZE; ix++) {
-        for (let iz = 0; iz < ISLAND_GRID_SIZE; iz++) {
+    // 7x7 grid of possible islands (48 blocks apart) matching original layout
+    for (let ix = 0; ix < 7; ix++) {
+        for (let iz = 0; iz < 7; iz++) {
             const key = `${ix},${iz}`;
             if (!islandOwners.has(key)) {
                 const x = ix * ISLAND_SPACING - 144;
@@ -56,10 +56,8 @@ function getAvailableIsland() {
             }
         }
     }
-    // If all islands taken, use a random position far away
-    const x = 300 + Math.floor(Math.random() * 100);
-    const z = 300 + Math.floor(Math.random() * 100);
-    return { x, z, key: 'overflow' };
+    // If all islands taken, use world spawn
+    return { x: 0, y: 10, z: 0, key: 'world_spawn' };
 }
 
 function addBlock(x, y, z, type) {
@@ -168,36 +166,28 @@ function deductCurrency(currency, cost) {
     }
 }
 
-// Create player island with bed
+// Create player island with bed (only iron dropper)
 function createPlayerIsland(offsetX, offsetZ, playerId) {
-    // Create 8x8 grass island
-    for (let x = 0; x < 8; x++) {
-        for (let z = 0; z < 8; z++) {
+    // Create 6x6 grass island (original size)
+    for (let x = 0; x < 6; x++) {
+        for (let z = 0; z < 6; z++) {
             addBlock(offsetX + x, 0, offsetZ + z, 'Grass');
         }
     }
     
     // Add bed in center
-    const bedX = offsetX + 4;
-    const bedZ = offsetZ + 4;
+    const bedX = offsetX + 3;
+    const bedZ = offsetZ + 3;
     addBlock(bedX, 1, bedZ, 'Bed');
     
-    // Add resource generators around the island
-    const generators = [
-        { x: offsetX + 1, z: offsetZ + 1, type: 'iron', interval: 3 },
-        { x: offsetX + 6, z: offsetZ + 1, type: 'gold', interval: 8 },
-        { x: offsetX + 1, z: offsetZ + 6, type: 'emerald', interval: 10 }
-    ];
-    
-    generators.forEach(gen => {
-        const s = {
-            x: gen.x + 0.5, y: 1.5, z: gen.z + 0.5,
-            resourceType: gen.type,
-            interval: gen.interval * 1000,
-            lastSpawn: Date.now()
-        };
-        spawners.push(s);
-    });
+    // Add ONLY iron generator on player island (like original)
+    const s = {
+        x: offsetX + 2.5, y: 1.5, z: offsetZ + 2.5,
+        resourceType: 'iron',
+        interval: 3 * 1000, // 3 seconds
+        lastSpawn: Date.now()
+    };
+    spawners.push(s);
     
     // Mark island as owned
     const key = islandKey(offsetX, offsetZ);
@@ -205,7 +195,7 @@ function createPlayerIsland(offsetX, offsetZ, playerId) {
     playerIslands.set(playerId, key);
 }
 
-// Create initial resource islands (no beds)
+// Create original resource islands from the original code
 function createResourceIsland(offsetX, offsetZ, spawnerType = null) {
     for (let x = 0; x < 6; x++) {
         for (let z = 0; z < 6; z++) {
@@ -223,15 +213,22 @@ function createResourceIsland(offsetX, offsetZ, spawnerType = null) {
     }
 }
 
-// Create resource islands in between player islands
-createResourceIsland(-60, -60, { type: 'iron', interval: 3 });
-createResourceIsland(12, -60, { type: 'gold', interval: 8 });
-createResourceIsland(84, -60, { type: 'emerald', interval: 10 });
-createResourceIsland(-60, 12, { type: 'iron', interval: 3 });
-createResourceIsland(84, 12, { type: 'gold', interval: 8 });
-createResourceIsland(-60, 84, { type: 'emerald', interval: 10 });
-createResourceIsland(12, 84, { type: 'iron', interval: 3 });
-createResourceIsland(84, 84, { type: 'gold', interval: 8 });
+// Create the original 7 islands from the original code
+// Original islands were at: (-15,-15), (33,-15), (-15,33), (33,33), (9,-15), (9,33), (9,9)
+// These are 48 blocks apart (33 - (-15) = 48)
+
+// Iron islands (4 corners)
+createResourceIsland(-15, -15, { type: 'iron', interval: 3 });
+createResourceIsland(33, -15, { type: 'iron', interval: 3 });
+createResourceIsland(-15, 33, { type: 'iron', interval: 3 });
+createResourceIsland(33, 33, { type: 'iron', interval: 3 });
+
+// Gold islands (middle left/right)
+createResourceIsland(9, -15, { type: 'gold', interval: 8 });
+createResourceIsland(9, 33, { type: 'gold', interval: 8 });
+
+// Emerald island (center)
+createResourceIsland(9, 9, { type: 'emerald', interval: 10 });
 
 // Socket connections
 io.on('connection', (socket) => {
@@ -239,8 +236,8 @@ io.on('connection', (socket) => {
     
     // Find available island for this player
     const island = getAvailableIsland();
-    const spawnX = island.x + 4;
-    const spawnZ = island.z + 4;
+    const spawnX = island.x + 3;
+    const spawnZ = island.z + 3;
     
     createPlayerIsland(island.x, island.z, socket.id);
     
@@ -251,7 +248,7 @@ io.on('connection', (socket) => {
         inventory: new Array(INVENTORY_SIZE).fill(null),
         currency: { iron: 0, gold: 0, emerald: 0 },
         selected: 0,
-        bedPosition: { x: spawnX + 4, y: 2, z: spawnZ + 4 },
+        bedPosition: { x: spawnX + 3, y: 2, z: spawnZ + 3 },
         hasBed: true,
         health: 100,
         isDead: false
