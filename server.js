@@ -33,7 +33,6 @@ const REQUIRED_PLAYERS = 2;
 const blocks = new Map();
 const pickups = new Map();
 const spawners = [];
-const spawnerCollectors = new Map();
 const players = new Map();
 let gameState = 'waiting';
 let countdownTimer = null;
@@ -91,10 +90,10 @@ function removeBlock(x, y, z) {
     return true;
 }
 
-function spawnPickup(x, y, z, resourceType, spawnerId) {
+function spawnPickup(x, y, z, resourceType) {
     const id = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-    pickups.set(id, { x, y, z, resourceType, spawnerId });
-    io.emit('addPickup', { id, x, y, z, resourceType, spawnerId });
+    pickups.set(id, { x, y, z, resourceType });
+    io.emit('addPickup', { id, x, y, z, resourceType });
 }
 
 function addToInventory(inv, type, amount) {
@@ -181,19 +180,13 @@ function createIsland(offsetX, offsetZ, spawnerType = null) {
         }
     }
     if (spawnerType) {
-        const spawnerId = `${offsetX}-${offsetZ}-${spawnerType.type}`;
         const s = {
-            id: spawnerId,
-            x: offsetX + 2.5, 
-            y: 1, 
-            z: offsetZ + 2.5,
+            x: offsetX + 2.5, y: 1, z: offsetZ + 2.5,
             resourceType: spawnerType.type,
             interval: spawnerType.interval * 1000,
-            lastSpawn: Date.now(),
-            totalCollected: 0
+            lastSpawn: Date.now()
         };
         spawners.push(s);
-        spawnerCollectors.set(spawnerId, s);
     }
 }
 
@@ -201,7 +194,6 @@ function initWorld() {
     blocks.clear();
     pickups.clear();
     spawners.length = 0;
-    spawnerCollectors.clear();
     
     // Create iron islands
     ironIslands.forEach(island => {
@@ -218,19 +210,6 @@ function initWorld() {
     
     // Reset occupied islands
     occupiedIronIslands = [];
-    
-    // Emit spawner data to all clients
-    const spawnerData = spawners.map(s => ({
-        id: s.id,
-        x: s.x,
-        y: s.y,
-        z: s.z,
-        resourceType: s.resourceType,
-        interval: s.interval,
-        lastSpawn: s.lastSpawn,
-        totalCollected: s.totalCollected
-    }));
-    io.emit('updateAllSpawners', spawnerData);
 }
 
 initWorld();
@@ -273,16 +252,6 @@ function resetGame() {
         return { x, y, z, type };
     });
     const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
-    const spawnerData = spawners.map(s => ({
-        id: s.id,
-        x: s.x,
-        y: s.y,
-        z: s.z,
-        resourceType: s.resourceType,
-        interval: s.interval,
-        lastSpawn: s.lastSpawn,
-        totalCollected: s.totalCollected
-    }));
     
     // Reset all players to spectators
     players.forEach((p, id) => {
@@ -309,7 +278,12 @@ function resetGame() {
     io.emit('worldReset', { 
         blocks: initBlocks, 
         pickups: initPickups, 
-        spawners: spawnerData 
+        spawners: spawners.map(s => ({
+            x: s.x, y: s.y, z: s.z,
+            resourceType: s.resourceType,
+            interval: s.interval / 1000,
+            lastSpawn: s.lastSpawn
+        }))
     });
     gameState = 'waiting';
     suddenDeath = false;
@@ -344,27 +318,19 @@ io.on('connection', (socket) => {
         return { x, y, z, type };
     });
     const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
-    const spawnerData = spawners.map(s => ({
-        id: s.id,
-        x: s.x,
-        y: s.y,
-        z: s.z,
-        resourceType: s.resourceType,
-        interval: s.interval,
-        lastSpawn: s.lastSpawn,
-        totalCollected: s.totalCollected
-    }));
     
     socket.emit('initWorld', { 
         blocks: initBlocks, 
         pickups: initPickups, 
-        spawners: spawnerData,
+        spawners: spawners.map(s => ({
+            x: s.x, y: s.y, z: s.z,
+            resourceType: s.resourceType,
+            interval: s.interval / 1000,
+            lastSpawn: s.lastSpawn
+        })),
         gameState,
         playersNeeded: getPlayersNeeded()
     });
-
-    // Send spawner data
-    socket.emit('initSpawners', spawnerData);
 
     // Send your ID
     socket.emit('yourId', socket.id);
@@ -465,37 +431,13 @@ io.on('connection', (socket) => {
         const dist = Math.hypot(p.pos.x - pickup.x, p.pos.y - pickup.y, p.pos.z - pickup.z);
         
         if (dist >= 1.5) {
-            socket.emit('revertPickup', { 
-                id, 
-                x: pickup.x, 
-                y: pickup.y, 
-                z: pickup.z, 
-                resourceType: pickup.resourceType, 
-                spawnerId: pickup.spawnerId 
-            });
+            socket.emit('revertPickup', { id, x: pickup.x, y: pickup.y, z: pickup.z, resourceType: pickup.resourceType });
             return;
         }
         
         const res = pickup.resourceType;
         p.currency[res] = (p.currency[res] || 0) + 1;
         pickups.delete(id);
-        
-        // Increment spawner collection count
-        if (pickup.spawnerId) {
-            const spawner = spawnerCollectors.get(pickup.spawnerId);
-            if (spawner) {
-                spawner.totalCollected++;
-                // Notify all clients about the updated spawner
-                io.emit('updateSpawner', { 
-                    id: spawner.id, 
-                    resourceType: spawner.resourceType, 
-                    totalCollected: spawner.totalCollected,
-                    lastSpawn: spawner.lastSpawn,
-                    interval: spawner.interval
-                });
-            }
-        }
-        
         io.emit('removePickup', id);
         socket.emit('updateCurrency', { ...p.currency });
     });
@@ -654,17 +596,8 @@ setInterval(() => {
         // Only spawn resources during game
         spawners.forEach((s) => {
             if (now - s.lastSpawn >= s.interval) {
-                spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType, s.id);
+                spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
                 s.lastSpawn = now;
-                
-                // Notify clients about the new spawn
-                io.emit('updateSpawner', { 
-                    id: s.id, 
-                    resourceType: s.resourceType, 
-                    totalCollected: s.totalCollected,
-                    lastSpawn: s.lastSpawn,
-                    interval: s.interval
-                });
             }
         });
         
