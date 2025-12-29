@@ -294,33 +294,41 @@
             pointer-events: none;
         }
 
-        /* Fullscreen Button */
-        #fullscreen-btn {
+        /* Mouse Lock Prompt */
+        #mouse-lock-prompt {
             position: absolute;
-            top: 20px;
-            right: 20px;
-            padding: 10px 20px;
-            background: rgba(0,0,0,0.7);
-            color: white;
-            border: 2px solid #555;
-            border-radius: 5px;
-            cursor: pointer;
-            z-index: 100;
-            font-family: 'Segoe UI', sans-serif;
-            font-size: 14px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffff88;
+            font-size: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 25;
+            pointer-events: none;
             display: none;
         }
 
-        #fullscreen-btn:hover {
-            background: rgba(50,50,50,0.8);
-            border-color: white;
+        #mouse-lock-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin-top: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            pointer-events: auto;
+        }
+
+        #mouse-lock-btn:hover {
+            background: #45a049;
         }
     </style>
 </head>
 <body>
-    <!-- Fullscreen Button -->
-    <button id="fullscreen-btn">Enter Fullscreen</button>
-    
     <!-- Timer Display -->
     <div id="timer">15:00</div>
     
@@ -329,6 +337,13 @@
     
     <!-- Waiting Message -->
     <div id="waiting-message"></div>
+    
+    <!-- Mouse Lock Prompt -->
+    <div id="mouse-lock-prompt">
+        <div>Mouse is not locked</div>
+        <div style="font-size: 14px; color: #ccc; margin-top: 5px;">Click anywhere or press the button below to lock mouse</div>
+        <button id="mouse-lock-btn">Lock Mouse</button>
+    </div>
     
     <!-- Existing elements -->
     <div id="loading">Connecting to server...</div>
@@ -350,7 +365,7 @@
     <div id="controls-hint">
         WASD: Move | SPACE: Jump<br>
         <span id="crouch-hint">SHIFT: Crouch</span> | 1-9: Select<br>
-        B: Shop<br>
+        B: Shop | ESC: Unlock Mouse<br>
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span>
     </div>
@@ -382,48 +397,67 @@
 
         const socket = io({ reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 1000 });
 
-        // --- Fullscreen functionality ---
-        const fullscreenBtn = document.getElementById('fullscreen-btn');
-        let isFullscreen = false;
-
-        fullscreenBtn.addEventListener('click', () => {
-            if (!isFullscreen) {
-                const elem = document.documentElement;
-                if (elem.requestFullscreen) {
-                    elem.requestFullscreen();
-                } else if (elem.webkitRequestFullscreen) { /* Safari */
-                    elem.webkitRequestFullscreen();
-                } else if (elem.msRequestFullscreen) { /* IE11 */
-                    elem.msRequestFullscreen();
-                }
-                isFullscreen = true;
-                fullscreenBtn.textContent = 'Exit Fullscreen';
-            } else {
-                if (document.exitFullscreen) {
-                    document.exitFullscreen();
-                } else if (document.webkitExitFullscreen) { /* Safari */
-                    document.webkitExitFullscreen();
-                } else if (document.msExitFullscreen) { /* IE11 */
-                    document.msExitFullscreen();
-                }
-                isFullscreen = false;
-                fullscreenBtn.textContent = 'Enter Fullscreen';
-            }
-        });
-
-        // Listen for fullscreen change events
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
-        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-        document.addEventListener('msfullscreenchange', handleFullscreenChange);
-
-        function handleFullscreenChange() {
-            isFullscreen = !!document.fullscreenElement;
-            fullscreenBtn.textContent = isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen';
-        }
-
         // Hide loading when connected
         socket.on('connect', () => {
             document.getElementById('loading').style.display = 'none';
+            // Show mouse lock prompt after connection
+            setTimeout(showMouseLockPrompt, 500);
+        });
+
+        // --- Mouse Lock Management ---
+        let isMouseLocked = false;
+        let mouseLockTimeout = null;
+        const mouseLockPrompt = document.getElementById('mouse-lock-prompt');
+        const mouseLockBtn = document.getElementById('mouse-lock-btn');
+
+        // Show mouse lock prompt when mouse is unlocked
+        function showMouseLockPrompt() {
+            if (!isMouseLocked && !isShopOpen()) {
+                mouseLockPrompt.style.display = 'block';
+            }
+        }
+
+        // Hide mouse lock prompt
+        function hideMouseLockPrompt() {
+            mouseLockPrompt.style.display = 'none';
+        }
+
+        // Check if shop is open
+        function isShopOpen() {
+            return document.getElementById('shop').style.display === 'block';
+        }
+
+        // Request mouse lock
+        function requestMouseLock() {
+            if (!controls.isLocked) {
+                controls.lock();
+                hideMouseLockPrompt();
+            }
+        }
+
+        // Mouse lock button click
+        mouseLockBtn.addEventListener('click', requestMouseLock);
+
+        // Click anywhere to lock mouse
+        document.addEventListener('click', (e) => {
+            // Don't lock if clicking on shop or UI elements
+            if (e.target.closest('#shop') || 
+                e.target.closest('#hotbar-container') || 
+                e.target.closest('#mouse-lock-btn') ||
+                isShopOpen()) {
+                return;
+            }
+            
+            if (!controls.isLocked) {
+                requestMouseLock();
+            }
+        });
+
+        // Escape key to unlock mouse
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && controls.isLocked) {
+                controls.unlock();
+            }
         });
 
         // --- Game State ---
@@ -521,16 +555,24 @@
                 document.getElementById('timer').style.display = 'none';
                 velocity.y = 0;
                 onGround = true;
-                fullscreenBtn.style.display = 'block';
+                
+                // Auto-lock mouse in spectator mode
+                if (!controls.isLocked) {
+                    setTimeout(requestMouseLock, 100);
+                }
             } else {
                 indicator.style.display = 'none';
                 document.getElementById('stats').style.display = 'block';
                 document.getElementById('hotbar-container').style.display = 'flex';
                 document.getElementById('crosshair').style.display = 'block';
                 document.getElementById('controls-hint').style.display = 'block';
-                fullscreenBtn.style.display = 'none';
                 if (isInRound) {
                     document.getElementById('timer').style.display = 'block';
+                }
+                
+                // Auto-lock mouse when becoming active player
+                if (!controls.isLocked) {
+                    setTimeout(requestMouseLock, 100);
                 }
             }
         }
@@ -860,6 +902,22 @@
         const velocity = new THREE.Vector3();
         const moveState = { fwd: false, bwd: false, l: false, r: false };
         let onGround = false;
+
+        // Pointer lock event listeners
+        controls.addEventListener('lock', () => {
+            isMouseLocked = true;
+            hideMouseLockPrompt();
+        });
+
+        controls.addEventListener('unlock', () => {
+            isMouseLocked = false;
+            // Show prompt after a short delay if not in shop
+            setTimeout(() => {
+                if (!isMouseLocked && !isShopOpen()) {
+                    showMouseLockPrompt();
+                }
+            }, 100);
+        });
 
         // Event listeners
         document.addEventListener('keydown', (e) => {
@@ -1405,8 +1463,17 @@
             
             const shop = document.getElementById('shop');
             const isVisible = shop.style.display === 'block';
-            shop.style.display = isVisible ? 'none' : 'block';
-            isVisible ? controls.lock() : (renderShop(), controls.unlock());
+            
+            if (isVisible) {
+                // Shop is closing, hide it and lock mouse
+                shop.style.display = 'none';
+                controls.lock();
+            } else {
+                // Shop is opening, show it and unlock mouse
+                shop.style.display = 'block';
+                controls.unlock();
+                renderShop();
+            }
         }
 
         function getPlayerColor(id) {
