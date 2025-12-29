@@ -221,9 +221,6 @@
             font-size: 12px;
             text-align: right;
             text-shadow: 1px 1px 2px black;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
         }
 
         .crouch-indicator {
@@ -301,34 +298,18 @@
         .spawner-label {
             position: absolute;
             color: white;
-            font-size: 12px;
+            font-size: 14px;
             font-weight: bold;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-            background: rgba(0,0,0,0.7);
-            padding: 4px 8px;
+            background: rgba(0,0,0,0.5);
+            padding: 2px 6px;
             border-radius: 4px;
             pointer-events: none;
             z-index: 5;
             text-align: center;
-            min-width: 80px;
+            min-width: 60px;
             transform: translate(-50%, -50%);
             display: none;
-            white-space: nowrap;
-            line-height: 1.2;
-        }
-
-        .spawner-line {
-            display: block;
-        }
-
-        .spawner-count {
-            font-size: 14px;
-            color: #88ff88;
-        }
-
-        .spawner-timer {
-            font-size: 11px;
-            color: #ffff88;
         }
     </style>
 </head>
@@ -337,7 +318,7 @@
     <div id="timer">15:00</div>
     
     <!-- Spectator Indicator -->
-    <div id="spectator-indicator">SPECTATOR MODE<br><span style="font-size: 16px;">Click to look around</span></div>
+    <div id="spectator-indicator">SPECTATOR MODE</div>
     
     <!-- Waiting Message -->
     <div id="waiting-message"></div>
@@ -360,17 +341,14 @@
         </div>
     </div>
     <div id="controls-hint">
-        <div id="normal-controls">
-            WASD: Move | SPACE: Jump<br>
-            <span id="crouch-hint">SHIFT: Crouch</span> | 1-9: Select<br>
-            B: Shop<br>
-            <span style="color: #ff8888">Hold L-Click: Break</span><br>
-            <span style="color: #88ff88">R-Click: Build</span>
-        </div>
-        <div id="spectator-controls" style="display: none; color: #8888ff;">
-            SPECTATOR: SPACE: Fly Up | CTRL: Fly Down<br>
-            Click to look around
-        </div>
+        WASD: Move | SPACE: Jump<br>
+        <span id="crouch-hint">SHIFT: Crouch</span> | 1-9: Select<br>
+        B: Shop<br>
+        <span style="color: #ff8888">Hold L-Click: Break</span><br>
+        <span style="color: #88ff88">R-Click: Build</span><br>
+        <span style="color: #8888ff; display: none;" id="spectator-controls-hint">
+            SPECTATOR: SPACE: Fly Up | CTRL/SHIFT: Fly Down
+        </span>
     </div>
     <div id="break-progress">
         <div id="break-progress-bar"></div>
@@ -451,7 +429,7 @@
 
         // Spawner tracking
         let spawnerLabels = new Map();
-        let spawnerData = new Map(); // Store spawner data with lastSpawn and interval
+        let spawnerPositions = new Map();
 
         // --- Timer Functions ---
         function updateTimerDisplay(seconds) {
@@ -493,13 +471,11 @@
         function setSpectatorMode(spectator) {
             isSpectator = spectator;
             const indicator = document.getElementById('spectator-indicator');
-            const spectatorHint = document.getElementById('spectator-controls');
-            const normalHint = document.getElementById('normal-controls');
+            const spectatorHint = document.getElementById('spectator-controls-hint');
             
             if (spectator) {
                 indicator.style.display = 'block';
                 spectatorHint.style.display = 'block';
-                normalHint.style.display = 'none';
                 document.getElementById('stats').style.display = 'none';
                 document.getElementById('hotbar-container').style.display = 'none';
                 document.getElementById('crosshair').style.display = 'none';
@@ -508,17 +484,9 @@
                 document.getElementById('timer').style.display = 'none';
                 velocity.y = 0;
                 onGround = true;
-                
-                // Show click instruction
-                setTimeout(() => {
-                    if (isSpectator && !controls.isLocked) {
-                        indicator.innerHTML = 'SPECTATOR MODE<br><span style="font-size: 16px;">Click to look around</span>';
-                    }
-                }, 100);
             } else {
                 indicator.style.display = 'none';
                 spectatorHint.style.display = 'none';
-                normalHint.style.display = 'block';
                 document.getElementById('stats').style.display = 'block';
                 document.getElementById('hotbar-container').style.display = 'flex';
                 document.getElementById('crosshair').style.display = 'block';
@@ -552,6 +520,7 @@
             const label = document.createElement('div');
             label.className = 'spawner-label';
             label.id = `spawner-${spawner.id}`;
+            label.textContent = `${spawner.resourceType}: ${spawner.totalCollected}`;
             
             // Set color based on resource type
             if (spawner.resourceType === 'iron') label.style.color = '#a0a0a0';
@@ -561,48 +530,27 @@
             document.body.appendChild(label);
             spawnerLabels.set(spawner.id, label);
             
-            // Store spawner data
-            spawnerData.set(spawner.id, {
-                ...spawner,
-                lastSpawn: spawner.lastSpawn || Date.now()
-            });
-            
             return label;
         }
 
         function updateSpawnerLabelPositions() {
-            const now = Date.now();
-            
             spawnerLabels.forEach((label, spawnerId) => {
-                const data = spawnerData.get(spawnerId);
-                if (!data) return;
-                
-                // Calculate time until next spawn
-                const timeSinceLastSpawn = now - data.lastSpawn;
-                const timeUntilNextSpawn = Math.max(0, data.interval - timeSinceLastSpawn);
-                const secondsUntilNext = Math.ceil(timeUntilNextSpawn / 1000);
-                
-                // Update label text with countdown
-                label.innerHTML = `
-                    <span class="spawner-line">${data.resourceType.toUpperCase()}</span>
-                    <span class="spawner-line spawner-count">${data.totalCollected} collected</span>
-                    <span class="spawner-line spawner-timer">Next: ${secondsUntilNext}s</span>
-                `;
-                
-                // Position the label
-                const vector = new THREE.Vector3(data.x, data.y + 2, data.z);
-                vector.project(camera);
-                
-                const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
-                
-                // Only show label if it's in front of the camera and within a reasonable distance
-                if (vector.z < 1 && vector.z > -1) {
-                    label.style.display = 'block';
-                    label.style.left = `${x}px`;
-                    label.style.top = `${y}px`;
-                } else {
-                    label.style.display = 'none';
+                const spawnerPos = spawnerPositions.get(spawnerId);
+                if (spawnerPos) {
+                    const vector = new THREE.Vector3(spawnerPos.x, spawnerPos.y + 2, spawnerPos.z);
+                    vector.project(camera);
+                    
+                    const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+                    const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
+                    
+                    // Only show label if it's in front of the camera and within a reasonable distance
+                    if (vector.z < 1 && vector.z > -1) {
+                        label.style.display = 'block';
+                        label.style.left = `${x}px`;
+                        label.style.top = `${y}px`;
+                    } else {
+                        label.style.display = 'none';
+                    }
                 }
             });
         }
@@ -745,7 +693,7 @@
             }
         }
 
-        function addResourceSpawner(x, y, z, resourceType, interval, lastSpawn) {
+        function addResourceSpawner(x, y, z, resourceType, interval) {
             const colors = { iron: 0xa0a0a0, gold: 0xffd700, emerald: 0x00ff88 };
             const spawner = new THREE.Mesh(
                 new THREE.SphereGeometry(0.3, 16, 16),
@@ -758,12 +706,7 @@
                 })
             );
             spawner.position.set(x, y, z);
-            spawner.userData = { 
-                type: 'spawner', 
-                resourceType: resourceType, 
-                lastSpawn: lastSpawn || Date.now(), 
-                interval: interval * 1000 
-            };
+            spawner.userData = { type: 'spawner', resourceType: resourceType, lastSpawn: Date.now(), interval: interval * 1000 };
             scene.add(spawner);
             resourceSpawners.push(spawner);
         }
@@ -835,6 +778,10 @@
                         e.preventDefault();
                         velocity.y = -5;
                         break;
+                    case 'ShiftLeft':
+                    case 'ShiftRight':
+                        velocity.y = -5;
+                        break;
                 }
                 return;
             }
@@ -884,6 +831,8 @@
                     case 'Space':
                     case 'ControlLeft':
                     case 'ControlRight':
+                    case 'ShiftLeft':
+                    case 'ShiftRight':
                         velocity.y = 0;
                         break;
                 }
@@ -903,30 +852,16 @@
             }
         });
 
-        // FIX: Allow spectators to lock pointer
-        document.addEventListener('click', () => {
-            if (isSpectator && !controls.isLocked) {
-                controls.lock();
-                document.getElementById('spectator-indicator').style.display = 'none';
-            }
-        });
-
         const raycaster = new THREE.Raycaster();
 
         document.addEventListener('mousedown', (e) => {
-            // FIX: Allow spectators to lock pointer on click
+            if (isSpectator) return;
+            
             if (!controls.isLocked) {
-                if (isSpectator || document.getElementById('shop').style.display !== 'block') {
-                    controls.lock();
-                    if (isSpectator) {
-                        document.getElementById('spectator-indicator').style.display = 'none';
-                    }
-                }
+                if(document.getElementById('shop').style.display !== 'block') controls.lock();
                 return;
             }
 
-            if (isSpectator) return;
-            
             raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
             const intersects = raycaster.intersectObjects(blocksInScene);
 
@@ -1484,7 +1419,7 @@
         socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, gameState: serverGameState, playersNeeded }) => {
             blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             pickups.forEach(addPickupMesh);
-            initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000, s.lastSpawn));
+            initSpawners.forEach(s => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
             
             if (serverGameState === 'waiting') {
                 updateWaitingMessage(playersNeeded);
@@ -1493,6 +1428,7 @@
 
         socket.on('initSpawners', (spawnerData) => {
             spawnerData.forEach(spawner => {
+                spawnerPositions.set(spawner.id, { x: spawner.x, y: spawner.y, z: spawner.z });
                 createSpawnerLabel(spawner);
             });
         });
@@ -1633,11 +1569,11 @@
             
             data.blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             data.pickups.forEach(addPickupMesh);
-            data.spawners.forEach((s) => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000, s.lastSpawn));
+            data.spawners.forEach((s) => addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval / 1000));
             
             spawnerLabels.forEach(label => label.remove());
             spawnerLabels.clear();
-            spawnerData.clear();
+            spawnerPositions.clear();
             
             setSpectatorMode(true);
         });
@@ -1671,15 +1607,10 @@
         });
 
         socket.on('updateSpawner', (spawnerData) => {
-            const existingData = spawnerData.get(spawnerData.id);
-            if (existingData) {
-                // Update the data
-                existingData.totalCollected = spawnerData.totalCollected;
-                if (spawnerData.lastSpawn) {
-                    existingData.lastSpawn = spawnerData.lastSpawn;
-                }
+            const label = spawnerLabels.get(spawnerData.id);
+            if (label) {
+                label.textContent = `${spawnerData.resourceType}: ${spawnerData.totalCollected}`;
             } else {
-                // Create new label
                 createSpawnerLabel(spawnerData);
             }
         });
@@ -1687,9 +1618,10 @@
         socket.on('updateAllSpawners', (spawnerData) => {
             spawnerLabels.forEach(label => label.remove());
             spawnerLabels.clear();
-            spawnerData.clear();
+            spawnerPositions.clear();
             
             spawnerData.forEach(spawner => {
+                spawnerPositions.set(spawner.id, { x: spawner.x, y: spawner.y, z: spawner.z });
                 createSpawnerLabel(spawner);
             });
         });
