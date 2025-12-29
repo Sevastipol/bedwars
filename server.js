@@ -198,6 +198,7 @@ function createIsland(offsetX, offsetZ, spawnerType = null) {
 }
 
 function initWorld() {
+    // Clear all existing blocks
     blocks.clear();
     pickups.clear();
     spawners.length = 0;
@@ -219,6 +220,7 @@ function initWorld() {
     occupiedIronIslands = [];
 }
 
+// Initialize world on server start
 initWorld();
 
 function assignPlayerToIsland(playerId) {
@@ -253,7 +255,11 @@ function assignPlayerToIsland(playerId) {
 }
 
 function resetGame() {
+    console.log('Resetting game...');
+    
+    // Reset world
     initWorld();
+    
     const initBlocks = Array.from(blocks, ([key, type]) => {
         const [x, y, z] = key.split(',').map(Number);
         return { x, y, z, type };
@@ -282,6 +288,7 @@ function resetGame() {
         io.to(id).emit('setSpectator', true);
     });
     
+    // Send world reset to all clients
     io.emit('worldReset', { 
         blocks: initBlocks, 
         pickups: initPickups, 
@@ -292,6 +299,7 @@ function resetGame() {
             lastSpawn: s.lastSpawn
         }))
     });
+    
     gameState = 'waiting';
     suddenDeath = false;
     roundStartTime = null;
@@ -429,7 +437,7 @@ io.on('connection', (socket) => {
                         });
                         // Free up occupied islands
                         occupiedIronIslands = [];
-                        // Remove any beds that were placed
+                        // Reset world to remove any beds that were placed
                         initWorld();
                     }
                 }
@@ -580,52 +588,61 @@ io.on('connection', (socket) => {
         console.log(`Disconnected: ${socket.id}`);
         
         const p = players.get(socket.id);
-        if (p && p.bedPos) {
-            // Remove player's bed and free up their island
-            removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
-            
-            // Find and free the occupied island
-            for (let i = 0; i < ironIslands.length; i++) {
-                if (ironIslands[i].bedX === p.bedPos.x && 
-                    ironIslands[i].bedY === p.bedPos.y && 
-                    ironIslands[i].bedZ === p.bedPos.z) {
-                    const index = occupiedIronIslands.indexOf(i);
-                    if (index > -1) {
-                        occupiedIronIslands.splice(index, 1);
+        if (p) {
+            // Remove player's bed if they have one
+            if (p.bedPos) {
+                removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
+                
+                // Find and free the occupied island
+                for (let i = 0; i < ironIslands.length; i++) {
+                    if (ironIslands[i].bedX === p.bedPos.x && 
+                        ironIslands[i].bedY === p.bedPos.y && 
+                        ironIslands[i].bedZ === p.bedPos.z) {
+                        const index = occupiedIronIslands.indexOf(i);
+                        if (index > -1) {
+                            occupiedIronIslands.splice(index, 1);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
-        }
-        
-        players.delete(socket.id);
-        io.emit('removePlayer', socket.id);
-        
-        updateWaitingMessages();
-        
-        if (gameState === 'waiting' && countdownTimer) {
-            const activePlayers = getActivePlayers();
-            const totalPlayers = players.size;
-            if (totalPlayers < REQUIRED_PLAYERS || activePlayers.length < REQUIRED_PLAYERS) {
-                clearInterval(countdownTimer);
-                countdownTimer = null;
-                io.emit('notification', 'Not enough players. Waiting...');
-                // Free up any occupied islands
-                occupiedIronIslands = [];
-                initWorld();
-            }
-        } else if (gameState === 'playing') {
-            const activePlayers = getActivePlayers();
-            if (activePlayers.length <= 1) {
-                // End game if only 0 or 1 active players left
-                if (activePlayers.length === 1) {
-                    const winnerId = activePlayers[0].id;
-                    io.emit('gameEnd', { winner: winnerId });
-                } else {
-                    io.emit('gameEnd', { winner: null });
+            
+            // Remove player from players map
+            players.delete(socket.id);
+            
+            // Notify all other clients to remove this player
+            io.emit('removePlayer', socket.id);
+            
+            updateWaitingMessages();
+            
+            // Check if we need to cancel countdown
+            if (gameState === 'waiting' && countdownTimer) {
+                const activePlayers = getActivePlayers();
+                const totalPlayers = players.size;
+                if (totalPlayers < REQUIRED_PLAYERS || activePlayers.length < REQUIRED_PLAYERS) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    io.emit('notification', 'Not enough players. Waiting...');
+                    // Free up any occupied islands
+                    occupiedIronIslands = [];
+                    // Reset world
+                    initWorld();
                 }
-                stopRoundTimer();
-                setTimeout(resetGame, 5000);
+            } else if (gameState === 'playing') {
+                // Check if game should end due to lack of players
+                const activePlayers = getActivePlayers();
+                if (activePlayers.length <= 1) {
+                    // End game if only 0 or 1 active players left
+                    if (activePlayers.length === 1) {
+                        const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
+                        io.emit('gameEnd', { winner: winnerId });
+                    } else {
+                        io.emit('gameEnd', { winner: null });
+                    }
+                    stopRoundTimer();
+                    gameState = 'ended';
+                    setTimeout(resetGame, 5000);
+                }
             }
         }
     });
