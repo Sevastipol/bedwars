@@ -34,6 +34,7 @@ const blocks = new Map();
 const pickups = new Map();
 const spawners = [];
 const players = new Map();
+const projectiles = new Map(); // For Enderpearls
 let gameActive = false;
 let countdownTimer = null;
 let roundStartTime = null;
@@ -203,6 +204,7 @@ function initWorld() {
     blocks.clear();
     pickups.clear();
     spawners.length = 0;
+    projectiles.clear();
     
     // Create iron islands
     ironIslands.forEach(island => {
@@ -603,6 +605,57 @@ io.on('connection', (socket) => {
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
     });
 
+    // Enderpearl throwing
+    socket.on('throwEnderpearl', () => {
+        const p = players.get(socket.id);
+        if (p.spectator) return;
+        
+        // Check if player has an enderpearl in selected slot
+        const slot = p.inventory[p.selected];
+        if (!slot || slot.type !== 'Enderpearl' || slot.count < 1) {
+            socket.emit('notification', 'No Enderpearl in selected slot!');
+            return;
+        }
+        
+        // Remove one enderpearl from inventory
+        slot.count--;
+        if (slot.count === 0) {
+            p.inventory[p.selected] = null;
+        }
+        
+        // Update player inventory
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        
+        // Calculate throw direction based on player rotation
+        const throwPower = 1.2; // Adjust this value for throw distance
+        const velocity = {
+            x: -Math.sin(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower,
+            y: Math.sin(p.rot.pitch) * throwPower,
+            z: -Math.cos(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower
+        };
+        
+        // Create projectile
+        const projectileId = `pearl-${socket.id}-${Date.now()}-${Math.random()}`;
+        const projectile = {
+            id: projectileId,
+            owner: socket.id,
+            x: p.pos.x,
+            y: p.pos.y + (p.crouch ? 1.3 : 1.6), // Eye height
+            z: p.pos.z,
+            vx: velocity.x,
+            vy: velocity.y,
+            vz: velocity.z,
+            gravity: 0.05,
+            createdAt: Date.now(),
+            landed: false
+        };
+        
+        projectiles.set(projectileId, projectile);
+        
+        // Broadcast to all clients
+        io.emit('addProjectile', projectile);
+    });
+
     socket.on('disconnect', () => {
         console.log(`Disconnected: ${socket.id}`);
         
@@ -681,6 +734,104 @@ setInterval(() => {
             });
             io.emit('notification', 'Beds destroyed - SUDDEN DEATH');
             suddenDeath = true;
+        }
+
+        // Update projectiles (Enderpearls)
+        projectiles.forEach((projectile, id) => {
+            if (projectile.landed) return;
+            
+            // Apply gravity
+            projectile.vy -= projectile.gravity;
+            
+            // Update position
+            projectile.x += projectile.vx;
+            projectile.y += projectile.vy;
+            projectile.z += projectile.vz;
+            
+            // Check for collision with ground or blocks
+            const checkX = Math.floor(projectile.x);
+            const checkY = Math.floor(projectile.y);
+            const checkZ = Math.floor(projectile.z);
+            
+            // Check if hit ground
+            if (projectile.y <= 0) {
+                projectile.landed = true;
+                projectile.landTime = now;
+                projectile.landX = projectile.x;
+                projectile.landY = 0.5; // Slightly above ground
+                projectile.landZ = projectile.z;
+                
+                // Teleport player after short delay
+                setTimeout(() => {
+                    const player = players.get(projectile.owner);
+                    if (player && !player.spectator) {
+                        player.pos.x = projectile.landX;
+                        player.pos.y = projectile.landY + 1;
+                        player.pos.z = projectile.landZ;
+                        
+                        io.to(projectile.owner).emit('teleport', {
+                            x: player.pos.x,
+                            y: player.pos.y,
+                            z: player.pos.z
+                        });
+                        
+                        // Remove projectile
+                        projectiles.delete(id);
+                        io.emit('removeProjectile', id);
+                    }
+                }, 100); // Small delay for visual effect
+            }
+            // Check for collision with blocks
+            else if (blocks.has(blockKey(checkX, checkY, checkZ))) {
+                projectile.landed = true;
+                projectile.landTime = now;
+                projectile.landX = projectile.x;
+                projectile.landY = projectile.y;
+                projectile.landZ = projectile.z;
+                
+                // Teleport player after short delay
+                setTimeout(() => {
+                    const player = players.get(projectile.owner);
+                    if (player && !player.spectator) {
+                        // Teleport to a safe spot near the impact
+                        player.pos.x = projectile.landX;
+                        player.pos.y = projectile.landY + 1;
+                        player.pos.z = projectile.landZ;
+                        
+                        io.to(projectile.owner).emit('teleport', {
+                            x: player.pos.x,
+                            y: player.pos.y,
+                            z: player.pos.z
+                        });
+                        
+                        // Remove projectile
+                        projectiles.delete(id);
+                        io.emit('removeProjectile', id);
+                    }
+                }, 100);
+            }
+            
+            // Remove old projectiles (safety)
+            if (now - projectile.createdAt > 10000) { // 10 seconds max
+                projectiles.delete(id);
+                io.emit('removeProjectile', id);
+            }
+        });
+        
+        // Send projectile updates to clients
+        if (projectiles.size > 0) {
+            const projectileUpdates = Array.from(projectiles.values())
+                .filter(p => !p.landed)
+                .map(p => ({
+                    id: p.id,
+                    x: p.x,
+                    y: p.y,
+                    z: p.z
+                }));
+            
+            if (projectileUpdates.length > 0) {
+                io.emit('updateProjectiles', projectileUpdates);
+            }
         }
 
         // Check for death/respawn
