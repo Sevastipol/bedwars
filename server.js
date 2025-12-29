@@ -131,8 +131,8 @@ function deductCurrency(currency, cost) {
 }
 
 function getPlayersNeeded() {
-    const activePlayers = Array.from(players.values()).filter(p => !p.spectator).length;
-    return Math.max(0, REQUIRED_PLAYERS - activePlayers);
+    const totalPlayers = Array.from(players.values()).filter(p => !p.spectator).length;
+    return Math.max(0, REQUIRED_PLAYERS - totalPlayers);
 }
 
 function getActivePlayers() {
@@ -141,6 +141,7 @@ function getActivePlayers() {
 
 function updateWaitingMessages() {
     const playersNeeded = getPlayersNeeded();
+    console.log(`[DEBUG] Players needed: ${playersNeeded}, Active players: ${getActivePlayers().length}, Total players: ${players.size}`);
     io.emit('updateWaiting', playersNeeded);
 }
 
@@ -161,7 +162,9 @@ function startRoundTimer() {
             gameState = 'ended';
             
             const activePlayers = getActivePlayers();
-            if (activePlayers.length > 0) {
+            console.log(`[DEBUG] Timer ended. Active players: ${activePlayers.length}`);
+            
+            if (activePlayers.length >= 1) {
                 const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
                 io.emit('gameEnd', { winner: winnerId });
             } else {
@@ -255,7 +258,7 @@ function assignPlayerToIsland(playerId) {
 }
 
 function resetGame() {
-    console.log('Resetting game...');
+    console.log('[DEBUG] Resetting game...');
     
     // Reset world
     initWorld();
@@ -307,9 +310,85 @@ function resetGame() {
     updateWaitingMessages();
 }
 
+// Check if game should start
+function checkGameStart() {
+    if (gameState === 'waiting') {
+        const activePlayers = getActivePlayers();
+        const totalPlayers = players.size;
+        
+        console.log(`[DEBUG] Checking game start: Active=${activePlayers.length}, Total=${totalPlayers}`);
+        
+        if (activePlayers.length >= REQUIRED_PLAYERS && !countdownTimer) {
+            let count = 10;
+            io.emit('notification', 'Game starting in 10 seconds!');
+            
+            countdownTimer = setInterval(() => {
+                io.emit('countdown', count);
+                count--;
+                
+                if (count < 0) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    
+                    // Assign beds and teleport players to islands
+                    const assignedPlayers = [];
+                    players.forEach((p, id) => {
+                        if (p.spectator) {
+                            const assignment = assignPlayerToIsland(id);
+                            if (assignment) {
+                                // Update player state
+                                p.spectator = false;
+                                p.pos = assignment.pos;
+                                p.rot = assignment.rot;
+                                p.bedPos = assignment.bedPos;
+                                assignedPlayers.push(id);
+                                
+                                // Send player their new state
+                                io.to(id).emit('assignBed', assignment);
+                                io.to(id).emit('setSpectator', false);
+                            }
+                        }
+                    });
+                    
+                    // Only start game if we have at least 2 players assigned
+                    const activeAfterAssignment = getActivePlayers();
+                    console.log(`[DEBUG] After assignment: ${activeAfterAssignment.length} active players`);
+                    
+                    if (activeAfterAssignment.length >= REQUIRED_PLAYERS) {
+                        gameState = 'playing';
+                        roundStartTime = Date.now();
+                        
+                        // Start resource spawning
+                        spawners.forEach(s => s.lastSpawn = Date.now());
+                        
+                        // Start round timer
+                        startRoundTimer();
+                        
+                        io.emit('gameStart');
+                    } else {
+                        // Not enough players got assigned, cancel game
+                        io.emit('notification', 'Not enough players assigned. Waiting...');
+                        assignedPlayers.forEach(id => {
+                            const p = players.get(id);
+                            p.spectator = true;
+                            p.bedPos = null;
+                            io.to(id).emit('setSpectator', true);
+                        });
+                        // Free up occupied islands
+                        occupiedIronIslands = [];
+                        // Reset world to remove any beds that were placed
+                        initWorld();
+                        updateWaitingMessages();
+                    }
+                }
+            }, 1000);
+        }
+    }
+}
+
 // Socket connections
 io.on('connection', (socket) => {
-    console.log(`New connection: ${socket.id}`);
+    console.log(`[DEBUG] New connection: ${socket.id}`);
     
     // New players always start as spectators
     const playerState = {
@@ -374,75 +453,9 @@ io.on('connection', (socket) => {
         spectator: playerState.spectator 
     });
 
-    // Start countdown if enough players
-    if (gameState === 'waiting') {
-        const activePlayers = getActivePlayers();
-        const totalPlayers = players.size;
-        updateWaitingMessages();
-        
-        if (totalPlayers >= REQUIRED_PLAYERS && activePlayers.length < REQUIRED_PLAYERS && !countdownTimer) {
-            let count = 10;
-            io.emit('notification', 'Game starting in 10 seconds!');
-            
-            countdownTimer = setInterval(() => {
-                io.emit('countdown', count);
-                count--;
-                
-                if (count < 0) {
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                    
-                    // Assign beds and teleport players to islands
-                    const assignedPlayers = [];
-                    players.forEach((p, id) => {
-                        if (p.spectator) {
-                            const assignment = assignPlayerToIsland(id);
-                            if (assignment) {
-                                // Update player state
-                                p.spectator = false;
-                                p.pos = assignment.pos;
-                                p.rot = assignment.rot;
-                                p.bedPos = assignment.bedPos;
-                                assignedPlayers.push(id);
-                                
-                                // Send player their new state
-                                io.to(id).emit('assignBed', assignment);
-                                io.to(id).emit('setSpectator', false);
-                            }
-                        }
-                    });
-                    
-                    // Only start game if we have at least 2 players assigned
-                    const activeAfterAssignment = getActivePlayers();
-                    if (activeAfterAssignment.length >= REQUIRED_PLAYERS) {
-                        gameState = 'playing';
-                        roundStartTime = Date.now();
-                        
-                        // Start resource spawning
-                        spawners.forEach(s => s.lastSpawn = Date.now());
-                        
-                        // Start round timer
-                        startRoundTimer();
-                        
-                        io.emit('gameStart');
-                    } else {
-                        // Not enough players got assigned, cancel game
-                        io.emit('notification', 'Not enough players assigned. Waiting...');
-                        assignedPlayers.forEach(id => {
-                            const p = players.get(id);
-                            p.spectator = true;
-                            p.bedPos = null;
-                            io.to(id).emit('setSpectator', true);
-                        });
-                        // Free up occupied islands
-                        occupiedIronIslands = [];
-                        // Reset world to remove any beds that were placed
-                        initWorld();
-                    }
-                }
-            }, 1000);
-        }
-    }
+    // Update waiting message and check game start
+    updateWaitingMessages();
+    checkGameStart();
 
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
@@ -584,7 +597,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log(`Disconnected: ${socket.id}`);
+        console.log(`[DEBUG] Disconnected: ${socket.id}`);
         
         const p = players.get(socket.id);
         if (p) {
@@ -612,37 +625,34 @@ io.on('connection', (socket) => {
             // Notify all other clients to remove this player
             io.emit('removePlayer', socket.id);
             
-            updateWaitingMessages();
-            
             // Check if we need to cancel countdown
             if (gameState === 'waiting' && countdownTimer) {
-                const activePlayers = getActivePlayers();
-                const totalPlayers = players.size;
-                if (totalPlayers < REQUIRED_PLAYERS || activePlayers.length < REQUIRED_PLAYERS) {
-                    clearInterval(countdownTimer);
-                    countdownTimer = null;
-                    io.emit('notification', 'Not enough players. Waiting...');
-                    // Free up any occupied islands
-                    occupiedIronIslands = [];
-                    // Reset world
-                    initWorld();
-                }
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+                io.emit('notification', 'Player left. Waiting...');
+                // Free up any occupied islands
+                occupiedIronIslands = [];
+                // Reset world
+                initWorld();
             } else if (gameState === 'playing') {
                 // Check if game should end due to lack of players
                 const activePlayers = getActivePlayers();
+                console.log(`[DEBUG] Player disconnect: Active players left: ${activePlayers.length}`);
+                
                 if (activePlayers.length <= 1) {
                     // End game if only 0 or 1 active players left
                     gameState = 'ended';
+                    let winnerId = null;
                     if (activePlayers.length === 1) {
-                        const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
-                        io.emit('gameEnd', { winner: winnerId });
-                    } else {
-                        io.emit('gameEnd', { winner: null });
+                        winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
                     }
+                    io.emit('gameEnd', { winner: winnerId });
                     stopRoundTimer();
                     setTimeout(resetGame, 5000);
                 }
             }
+            
+            updateWaitingMessages();
         }
     });
 });
@@ -705,27 +715,28 @@ setInterval(() => {
                         }
                         p.bedPos = null;
                     }
+                    
+                    // Check if game should end
+                    const activePlayers = getActivePlayers();
+                    console.log(`[DEBUG] Player eliminated: Active players left: ${activePlayers.length}`);
+                    
+                    if (activePlayers.length <= 1) {
+                        gameState = 'ended';
+                        let winnerId = null;
+                        if (activePlayers.length === 1) {
+                            winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
+                        }
+                        io.emit('gameEnd', { winner: winnerId });
+                        stopRoundTimer();
+                        setTimeout(resetGame, 5000);
+                    } else {
+                        // Update waiting message since player count changed
+                        updateWaitingMessages();
+                    }
                 }
                 p.lastRespawn = now;
             }
         });
-
-        // Check for winner - only if game is still playing
-        if (gameState === 'playing') {
-            const activePlayers = getActivePlayers();
-            
-            // Only check for winner if we're in playing state
-            if (activePlayers.length <= 1) {
-                let winnerId = null;
-                if (activePlayers.length === 1) {
-                    winnerId = Array.from(players.entries()).find(([_, p]) => !p.spectator)[0];
-                }
-                io.emit('gameEnd', { winner: winnerId });
-                stopRoundTimer();
-                gameState = 'ended';
-                setTimeout(resetGame, 5000);
-            }
-        }
     }
 
     // Sync players (20 FPS)
