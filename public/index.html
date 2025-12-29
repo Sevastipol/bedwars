@@ -365,7 +365,8 @@
         <span id="crouch-hint">SHIFT: Crouch</span> | 1-9: Select<br>
         B: Shop | ESC: Unlock Mouse<br>
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
-        <span style="color: #88ff88">R-Click: Build</span>
+        <span style="color: #88ff88">R-Click: Build</span><br>
+        <span style="color: #88aaff">Right-Click with Enderpearl: Throw</span>
     </div>
     <div id="break-progress">
         <div id="break-progress-bar"></div>
@@ -430,6 +431,7 @@
         const blocksInScene = [];
         const resourceSpawners = [];
         const resourcePickups = [];
+        const projectiles = new Map(); // For Enderpearl projectiles
 
         // Breaking state
         let isBreaking = false;
@@ -740,6 +742,72 @@
             }
         }
 
+        // --- Projectile Functions ---
+        function createProjectileMesh(data) {
+            if (!enderpearlTexture) return null;
+            
+            const geometry = new THREE.SphereGeometry(0.15, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ 
+                map: enderpearlTexture,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            const projectile = new THREE.Mesh(geometry, material);
+            projectile.position.set(data.x, data.y, data.z);
+            projectile.userData = { id: data.id, type: 'enderpearl' };
+            scene.add(projectile);
+            
+            // Add a particle trail effect
+            const trailGeometry = new THREE.BufferGeometry();
+            const trailMaterial = new THREE.PointsMaterial({
+                color: 0x00ff88,
+                size: 0.05,
+                transparent: true,
+                opacity: 0.6
+            });
+            
+            const trail = new THREE.Points(trailGeometry, trailMaterial);
+            trail.userData = { type: 'trail', parentId: data.id, points: [] };
+            scene.add(trail);
+            
+            projectiles.set(data.id, { mesh: projectile, trail, lastPositions: [] });
+            return projectile;
+        }
+
+        function updateProjectileTrail(projectileId, newPosition) {
+            const projectile = projectiles.get(projectileId);
+            if (!projectile || !projectile.trail) return;
+            
+            // Add new position to trail
+            projectile.lastPositions.push(new THREE.Vector3(newPosition.x, newPosition.y, newPosition.z));
+            
+            // Keep only last 10 positions
+            if (projectile.lastPositions.length > 10) {
+                projectile.lastPositions.shift();
+            }
+            
+            // Update trail geometry
+            if (projectile.lastPositions.length > 1) {
+                const positions = [];
+                projectile.lastPositions.forEach(pos => {
+                    positions.push(pos.x, pos.y, pos.z);
+                });
+                
+                projectile.trail.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                projectile.trail.geometry.attributes.position.needsUpdate = true;
+            }
+        }
+
+        function removeProjectileMesh(id) {
+            const projectile = projectiles.get(id);
+            if (projectile) {
+                if (projectile.mesh) scene.remove(projectile.mesh);
+                if (projectile.trail) scene.remove(projectile.trail);
+                projectiles.delete(id);
+            }
+        }
+
         function addResourceSpawner(x, y, z, resourceType, interval, lastSpawn = null) {
             const colors = { iron: 0xa0a0a0, gold: 0xffd700, emerald: 0x00ff88 };
             const spawner = new THREE.Mesh(
@@ -988,6 +1056,15 @@
 
             if (e.button === 2) {
                 const currentSlot = inventory[selectedSlotIndex];
+                
+                // Check if we have an enderpearl selected
+                if (currentSlot && currentSlot.type === 'Enderpearl' && currentSlot.count > 0) {
+                    // Throw enderpearl instead of placing blocks
+                    socket.emit('throwEnderpearl');
+                    return;
+                }
+                
+                // Regular block placement
                 if (intersects.length > 0 && currentSlot && currentSlot.count > 0) {
                     const intersect = intersects[0];
                     if (intersect.distance > 5) return;
@@ -1142,6 +1219,20 @@
             }
 
             const now = Date.now();
+
+            // Animate projectiles (client-side prediction)
+            projectiles.forEach((projectileData, id) => {
+                if (projectileData.mesh) {
+                    // Make projectile spin slowly
+                    projectileData.mesh.rotation.x += 0.1;
+                    projectileData.mesh.rotation.y += 0.1;
+                    
+                    // Fade trail over time
+                    if (projectileData.trail) {
+                        projectileData.trail.material.opacity = Math.max(0, projectileData.trail.material.opacity - 0.01);
+                    }
+                }
+            });
 
             resourceSpawners.forEach(spawner => {
                 const pulseSpeed = 2;
@@ -1628,6 +1719,25 @@
             wasBuying = false;
         });
 
+        // Projectile events
+        socket.on('addProjectile', (data) => {
+            createProjectileMesh(data);
+        });
+
+        socket.on('updateProjectiles', (projectilesData) => {
+            projectilesData.forEach(data => {
+                const projectile = projectiles.get(data.id);
+                if (projectile && projectile.mesh) {
+                    projectile.mesh.position.set(data.x, data.y, data.z);
+                    updateProjectileTrail(data.id, data);
+                }
+            });
+        });
+
+        socket.on('removeProjectile', (id) => {
+            removeProjectileMesh(id);
+        });
+
         socket.on('removePlayer', (id) => {
             removeOtherPlayer(id);
         });
@@ -1636,6 +1746,12 @@
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
             camera.rotation.set(data.rot.pitch, data.rot.yaw, 0);
             velocity.set(0, 0, 0);
+        });
+
+        socket.on('teleport', (data) => {
+            camera.position.set(data.x, data.y, data.z);
+            velocity.set(0, 0, 0);
+            showNotification('Teleported!', 1500);
         });
 
         socket.on('bedDestroyed', () => {
@@ -1684,18 +1800,21 @@
         });
 
         socket.on('worldReset', (data) => {
+            // Clear blocks
             blocksInScene.forEach((m) => {
                 scene.remove(m);
             });
             blocksInScene.length = 0;
             blocksMeshes.clear();
             
+            // Clear pickups
             resourcePickups.forEach((m) => {
                 scene.remove(m);
             });
             resourcePickups.length = 0;
             pickupMeshes.clear();
             
+            // Clear spawners
             resourceSpawners.forEach((spawner) => {
                 scene.remove(spawner);
                 if (spawner.userData.textSprite) {
@@ -1704,17 +1823,27 @@
             });
             resourceSpawners.length = 0;
             
+            // Clear projectiles
+            projectiles.forEach((proj, id) => {
+                removeProjectileMesh(id);
+            });
+            projectiles.clear();
+            
+            // Clear other players
             otherPlayers.forEach((op, id) => {
                 scene.remove(op.group);
             });
             otherPlayers.clear();
             
+            // Add new blocks
             data.blocks.forEach(({ x, y, z, type }) => {
                 addBlockMesh(x, y, z, type);
             });
             
+            // Add new pickups
             data.pickups.forEach(addPickupMesh);
             
+            // Add new spawners
             data.spawners.forEach((s) => {
                 const spawnerMesh = addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval, s.lastSpawn);
                 if (s.lastSpawn) {
