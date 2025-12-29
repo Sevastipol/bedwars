@@ -742,44 +742,48 @@
             }
         }
 
-        // --- Projectile Functions ---
-        function createProjectileMesh(data) {
+        // --- Enderpearl Functions (Minecraft-style) ---
+        function createEnderpearlMesh(data) {
             if (!enderpearlTexture) return null;
             
-            // Create a billboard sprite for the enderpearl (like in Minecraft)
-            const spriteMaterial = new THREE.SpriteMaterial({ 
+            // Create a Minecraft-style enderpearl: small sphere with texture
+            const geometry = new THREE.SphereGeometry(0.125, 8, 8); // Small sphere like Minecraft
+            const material = new THREE.MeshBasicMaterial({ 
                 map: enderpearlTexture,
                 transparent: true,
-                opacity: 0.9,
-                rotation: 0,
-                sizeAttenuation: false
+                opacity: 0.9
             });
             
-            const projectile = new THREE.Sprite(spriteMaterial);
-            projectile.scale.set(0.6, 0.6, 1); // Make it slightly larger
-            projectile.position.set(data.x, data.y, data.z);
-            projectile.userData = { 
+            const pearl = new THREE.Mesh(geometry, material);
+            pearl.position.set(data.x, data.y, data.z);
+            pearl.userData = { 
                 id: data.id, 
                 type: 'enderpearl',
-                material: spriteMaterial
+                rotation: 0
             };
-            scene.add(projectile);
+            scene.add(pearl);
             
-            // Store projectile with additional data for rotation
-            projectiles.set(data.id, { 
-                mesh: projectile, 
-                rotationSpeed: 0.15,
-                rotation: 0,
-                lastUpdate: Date.now()
-            });
+            // Store for updates
+            projectiles.set(data.id, pearl);
             
-            return projectile;
+            return pearl;
         }
 
-        function removeProjectileMesh(id) {
-            const projectile = projectiles.get(id);
-            if (projectile) {
-                if (projectile.mesh) scene.remove(projectile.mesh);
+        function updateEnderpearl(id, position) {
+            const pearl = projectiles.get(id);
+            if (pearl) {
+                pearl.position.set(position.x, position.y, position.z);
+                // Rotate the pearl like in Minecraft
+                pearl.userData.rotation += 0.3;
+                pearl.rotation.x = pearl.userData.rotation;
+                pearl.rotation.y = pearl.userData.rotation;
+            }
+        }
+
+        function removeEnderpearlMesh(id) {
+            const pearl = projectiles.get(id);
+            if (pearl) {
+                scene.remove(pearl);
                 projectiles.delete(id);
             }
         }
@@ -1196,17 +1200,12 @@
 
             const now = Date.now();
 
-            // Animate projectiles (enderpearls)
-            projectiles.forEach((projectileData, id) => {
-                if (projectileData.mesh) {
-                    // Make the enderpearl sprite slowly rotate
-                    projectileData.rotation += projectileData.rotationSpeed * delta * 10;
-                    projectileData.mesh.userData.material.rotation = projectileData.rotation;
-                    projectileData.mesh.userData.material.needsUpdate = true;
-                    
-                    // Add a subtle floating effect
-                    const floatOffset = Math.sin(now / 500 + id.length * 0.1) * 0.02;
-                    projectileData.mesh.position.y += floatOffset * delta * 2;
+            // Update enderpearl rotations
+            projectiles.forEach((pearl) => {
+                if (pearl.userData) {
+                    pearl.userData.rotation += 0.3;
+                    pearl.rotation.x = pearl.userData.rotation;
+                    pearl.rotation.y = pearl.userData.rotation;
                 }
             });
 
@@ -1695,22 +1694,17 @@
             wasBuying = false;
         });
 
-        // Projectile events
-        socket.on('addProjectile', (data) => {
-            createProjectileMesh(data);
+        // Enderpearl events
+        socket.on('addEnderpearl', (data) => {
+            createEnderpearlMesh(data);
         });
 
-        socket.on('updateProjectiles', (projectilesData) => {
-            projectilesData.forEach(data => {
-                const projectile = projectiles.get(data.id);
-                if (projectile && projectile.mesh) {
-                    projectile.mesh.position.set(data.x, data.y, data.z);
-                }
-            });
+        socket.on('updateEnderpearl', (data) => {
+            updateEnderpearl(data.id, data);
         });
 
-        socket.on('removeProjectile', (id) => {
-            removeProjectileMesh(id);
+        socket.on('removeEnderpearl', (id) => {
+            removeEnderpearlMesh(id);
         });
 
         socket.on('removePlayer', (id) => {
@@ -1798,9 +1792,9 @@
             });
             resourceSpawners.length = 0;
             
-            // Clear projectiles
-            projectiles.forEach((proj, id) => {
-                removeProjectileMesh(id);
+            // Clear enderpearls
+            projectiles.forEach((pearl, id) => {
+                removeEnderpearlMesh(id);
             });
             projectiles.clear();
             
