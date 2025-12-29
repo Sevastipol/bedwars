@@ -293,9 +293,49 @@
             z-index: 20;
             pointer-events: none;
         }
+        
+        /* Fullscreen Click Overlay */
+        #fullscreen-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            font-size: 24px;
+            text-align: center;
+        }
+        
+        #fullscreen-overlay button {
+            margin-top: 20px;
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        
+        #fullscreen-overlay button:hover {
+            background: #45a049;
+        }
     </style>
 </head>
 <body>
+    <!-- Fullscreen Overlay -->
+    <div id="fullscreen-overlay" style="display: block;">
+        <h2>Welcome to Island Builder</h2>
+        <p>Click the button below to enter fullscreen mode</p>
+        <button id="enter-fullscreen">Enter Fullscreen</button>
+    </div>
+    
     <!-- Timer Display -->
     <div id="timer">15:00</div>
     
@@ -406,6 +446,57 @@
         let pickupMeshes = new Map();
         let otherPlayers = new Map();
 
+        // --- Fullscreen Functions ---
+        function enterFullscreen() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.webkitRequestFullscreen) { /* Safari */
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { /* IE11 */
+                elem.msRequestFullscreen();
+            }
+            
+            document.getElementById('fullscreen-overlay').style.display = 'none';
+            
+            // Auto-lock mouse after entering fullscreen
+            setTimeout(() => {
+                if (!controls.isLocked && !isShopOpen()) {
+                    controls.lock();
+                }
+            }, 500);
+        }
+
+        // Check if we're already in fullscreen
+        function isFullscreen() {
+            return document.fullscreenElement || 
+                   document.webkitFullscreenElement || 
+                   document.msFullscreenElement;
+        }
+
+        // Auto-enter fullscreen on click
+        document.getElementById('enter-fullscreen').addEventListener('click', enterFullscreen);
+        
+        // Also allow clicking anywhere on the overlay
+        document.getElementById('fullscreen-overlay').addEventListener('click', (e) => {
+            if (e.target.id !== 'enter-fullscreen') {
+                enterFullscreen();
+            }
+        });
+
+        // Check if already in fullscreen
+        document.addEventListener('fullscreenchange', () => {
+            if (isFullscreen()) {
+                document.getElementById('fullscreen-overlay').style.display = 'none';
+            }
+        });
+
+        document.addEventListener('webkitfullscreenchange', () => {
+            if (isFullscreen()) {
+                document.getElementById('fullscreen-overlay').style.display = 'none';
+            }
+        });
+
         // --- Timer Functions ---
         function updateTimerDisplay(seconds) {
             const timerElement = document.getElementById('timer');
@@ -459,7 +550,7 @@
                 onGround = true;
                 
                 // Auto-lock mouse in spectator mode
-                if (!controls.isLocked) {
+                if (!controls.isLocked && isFullscreen() && !isShopOpen()) {
                     setTimeout(() => {
                         if (!controls.isLocked && !isShopOpen()) {
                             controls.lock();
@@ -477,7 +568,7 @@
                 }
                 
                 // Auto-lock mouse when becoming active player
-                if (!controls.isLocked) {
+                if (!controls.isLocked && isFullscreen() && !isShopOpen()) {
                     setTimeout(() => {
                         if (!controls.isLocked && !isShopOpen()) {
                             controls.lock();
@@ -521,7 +612,19 @@
         let emeraldTexture = null;
         let breakingTextures = [];
 
-        textureLoader.load('https://i.ibb.co/394nfmMz/pixilart-drawing-3.png', (texture) => {
+        // Texture URLs - FIXED: Using same URLs for block textures and icons
+        const TEXTURE_URLS = {
+            grass: 'https://i.ibb.co/394nfmMz/pixilart-drawing-3.png',
+            wood: 'https://i.ibb.co/KpWBZRPS/pixilart-drawing-2.png',
+            stone: 'https://i.ibb.co/rGVR38xv/pixilart-drawing-5.png',
+            obsidian: 'https://i.ibb.co/bRdZdGR2/pixilart-drawing-4.png',
+            iron: 'https://i.ibb.co/n87Ym7RY/pixilart-drawing-7.png',
+            gold: 'https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png',
+            emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png'
+        };
+
+        // Load all textures
+        textureLoader.load(TEXTURE_URLS.grass, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             texture.wrapS = THREE.RepeatWrapping;
@@ -529,7 +632,7 @@
             grassTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/KpWBZRPS/pixilart-drawing-2.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.wood, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             texture.wrapS = THREE.RepeatWrapping;
@@ -537,7 +640,7 @@
             woodTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/rGVR38xv/pixilart-drawing-5.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.stone, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             texture.wrapS = THREE.RepeatWrapping;
@@ -545,7 +648,7 @@
             stoneTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/bRdZdGR2/pixilart-drawing-4.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.obsidian, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             texture.wrapS = THREE.RepeatWrapping;
@@ -553,19 +656,19 @@
             obsidianTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/n87Ym7RY/pixilart-drawing-7.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.iron, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             ironTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.gold, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             goldTexture = texture;
         });
 
-        textureLoader.load('https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png', (texture) => {
+        textureLoader.load(TEXTURE_URLS.emerald, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             emeraldTexture = texture;
@@ -800,8 +903,10 @@
             return document.getElementById('shop').style.display === 'block';
         }
 
-        // Event listeners
+        // Event listeners - FIXED: Auto-lock mouse for spectators
         document.addEventListener('keydown', (e) => {
+            if (!isFullscreen()) return;
+            
             if (isSpectator) {
                 if(e.code === 'KeyB') return;
                 
@@ -853,6 +958,8 @@
         });
 
         document.addEventListener('keyup', (e) => {
+            if (!isFullscreen()) return;
+            
             if (isSpectator) {
                 switch(e.code) {
                     case 'KeyW': moveState.fwd = false; break;
@@ -882,10 +989,21 @@
         const raycaster = new THREE.Raycaster();
 
         document.addEventListener('mousedown', (e) => {
-            if (isSpectator) return;
+            if (!isFullscreen()) {
+                enterFullscreen();
+                return;
+            }
+            
+            if (isSpectator) {
+                // Allow spectators to lock mouse by clicking
+                if (!controls.isLocked && !isShopOpen()) {
+                    controls.lock();
+                }
+                return;
+            }
             
             if (!controls.isLocked) {
-                if(document.getElementById('shop').style.display !== 'block') controls.lock();
+                if(!isShopOpen()) controls.lock();
                 return;
             }
 
@@ -1280,10 +1398,11 @@
                     if (blockData.hasTexture) {
                         const icon = document.createElement('img');
                         icon.className = 'block-icon';
-                        if (slot.type === 'Grass') icon.src = 'https://i.ibb.co/394nfmMz/pixilart-drawing-3.png';
-                        else if (slot.type === 'Wood') icon.src = 'https://i.ibb.co/KpWBZRPS/pixilart-drawing-2.png';
-                        else if (slot.type === 'Stone') icon.src = 'https://i.ibb.co/rGVR38xv/pixilart-drawing-5.png';
-                        else if (slot.type === 'Obsidian') icon.src = 'https://i.ibb.co/bRdZdGR2/pixilart-drawing-4.png';
+                        // FIXED: Use same texture URLs as block textures
+                        if (slot.type === 'Grass') icon.src = TEXTURE_URLS.grass;
+                        else if (slot.type === 'Wood') icon.src = TEXTURE_URLS.wood;
+                        else if (slot.type === 'Stone') icon.src = TEXTURE_URLS.stone;
+                        else if (slot.type === 'Obsidian') icon.src = TEXTURE_URLS.obsidian;
                         div.appendChild(icon);
                     } else {
                         const icon = document.createElement('div');
@@ -1691,7 +1810,11 @@
         // Start as spectator
         setSpectatorMode(true);
         updateUI();
-        animate();
+        
+        // Auto-start animation after a short delay
+        setTimeout(() => {
+            animate();
+        }, 100);
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
