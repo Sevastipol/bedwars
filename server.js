@@ -527,6 +527,18 @@ io.on('connection', (socket) => {
                 return;
             }
             
+            // Check distance for bed breaking (same as other blocks)
+            const dist = Math.hypot(
+                p.pos.x - (x + 0.5),
+                (p.pos.y - (p.crouch ? 1.3 : 1.6)) - (y + 0.5),
+                p.pos.z - (z + 0.5)
+            );
+            
+            if (dist > 5) {
+                socket.emit('revertBreak', { x, y, z, type: 'Bed' });
+                return;
+            }
+            
             removeBlock(x, y, z);
             return;
         }
