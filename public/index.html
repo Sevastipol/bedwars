@@ -639,7 +639,7 @@
             iron: 'https://i.ibb.co/n87Ym7RY/pixilart-drawing-7.png',
             gold: 'https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png',
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png',
-            enderpearl: 'https://i.ibb.co/hDmcm2V6/ender-pearl.png' // Updated to a proper enderpearl image
+            enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png'
         };
 
         // Load textures
@@ -778,7 +778,7 @@
             
             const pearl = new THREE.Sprite(spriteMaterial);
             pearl.position.set(data.x, data.y, data.z);
-            pearl.scale.set(0.3, 0.3, 1); // Make it smaller like Minecraft enderpearl
+            pearl.scale.set(0.25, 0.25, 1); // Make it smaller like Minecraft enderpearl
             
             // Store rotation for spinning effect
             pearl.userData = { 
@@ -1966,7 +1966,7 @@
         socket.on('playerHit', ({ attackerId, targetId, newHealth }) => {
             updatePlayerHealth(targetId, newHealth);
             
-            if (targetId === playerId) {
+            if (targetId === playerId && attackerId) {
                 showNotification(`You were hit! Health: ${newHealth}/10`, 2000);
             }
         });
