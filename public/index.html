@@ -293,39 +293,6 @@
             z-index: 20;
             pointer-events: none;
         }
-
-        /* Mouse Lock Prompt */
-        #mouse-lock-prompt {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #ffff88;
-            font-size: 20px;
-            background: rgba(0,0,0,0.8);
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            z-index: 25;
-            pointer-events: none;
-            display: none;
-        }
-
-        #mouse-lock-btn {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            margin-top: 10px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            pointer-events: auto;
-        }
-
-        #mouse-lock-btn:hover {
-            background: #45a049;
-        }
     </style>
 </head>
 <body>
@@ -337,13 +304,6 @@
     
     <!-- Waiting Message -->
     <div id="waiting-message"></div>
-    
-    <!-- Mouse Lock Prompt -->
-    <div id="mouse-lock-prompt">
-        <div>Mouse is not locked</div>
-        <div style="font-size: 14px; color: #ccc; margin-top: 5px;">Click anywhere or press the button below to lock mouse</div>
-        <button id="mouse-lock-btn">Lock Mouse</button>
-    </div>
     
     <!-- Existing elements -->
     <div id="loading">Connecting to server...</div>
@@ -400,64 +360,6 @@
         // Hide loading when connected
         socket.on('connect', () => {
             document.getElementById('loading').style.display = 'none';
-            // Show mouse lock prompt after connection
-            setTimeout(showMouseLockPrompt, 500);
-        });
-
-        // --- Mouse Lock Management ---
-        let isMouseLocked = false;
-        let mouseLockTimeout = null;
-        const mouseLockPrompt = document.getElementById('mouse-lock-prompt');
-        const mouseLockBtn = document.getElementById('mouse-lock-btn');
-
-        // Show mouse lock prompt when mouse is unlocked
-        function showMouseLockPrompt() {
-            if (!isMouseLocked && !isShopOpen()) {
-                mouseLockPrompt.style.display = 'block';
-            }
-        }
-
-        // Hide mouse lock prompt
-        function hideMouseLockPrompt() {
-            mouseLockPrompt.style.display = 'none';
-        }
-
-        // Check if shop is open
-        function isShopOpen() {
-            return document.getElementById('shop').style.display === 'block';
-        }
-
-        // Request mouse lock
-        function requestMouseLock() {
-            if (!controls.isLocked) {
-                controls.lock();
-                hideMouseLockPrompt();
-            }
-        }
-
-        // Mouse lock button click
-        mouseLockBtn.addEventListener('click', requestMouseLock);
-
-        // Click anywhere to lock mouse
-        document.addEventListener('click', (e) => {
-            // Don't lock if clicking on shop or UI elements
-            if (e.target.closest('#shop') || 
-                e.target.closest('#hotbar-container') || 
-                e.target.closest('#mouse-lock-btn') ||
-                isShopOpen()) {
-                return;
-            }
-            
-            if (!controls.isLocked) {
-                requestMouseLock();
-            }
-        });
-
-        // Escape key to unlock mouse
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && controls.isLocked) {
-                controls.unlock();
-            }
         });
 
         // --- Game State ---
@@ -558,7 +460,11 @@
                 
                 // Auto-lock mouse in spectator mode
                 if (!controls.isLocked) {
-                    setTimeout(requestMouseLock, 100);
+                    setTimeout(() => {
+                        if (!controls.isLocked && !isShopOpen()) {
+                            controls.lock();
+                        }
+                    }, 100);
                 }
             } else {
                 indicator.style.display = 'none';
@@ -572,7 +478,11 @@
                 
                 // Auto-lock mouse when becoming active player
                 if (!controls.isLocked) {
-                    setTimeout(requestMouseLock, 100);
+                    setTimeout(() => {
+                        if (!controls.isLocked && !isShopOpen()) {
+                            controls.lock();
+                        }
+                    }, 100);
                 }
             }
         }
@@ -903,21 +813,10 @@
         const moveState = { fwd: false, bwd: false, l: false, r: false };
         let onGround = false;
 
-        // Pointer lock event listeners
-        controls.addEventListener('lock', () => {
-            isMouseLocked = true;
-            hideMouseLockPrompt();
-        });
-
-        controls.addEventListener('unlock', () => {
-            isMouseLocked = false;
-            // Show prompt after a short delay if not in shop
-            setTimeout(() => {
-                if (!isMouseLocked && !isShopOpen()) {
-                    showMouseLockPrompt();
-                }
-            }, 100);
-        });
+        // Check if shop is open
+        function isShopOpen() {
+            return document.getElementById('shop').style.display === 'block';
+        }
 
         // Event listeners
         document.addEventListener('keydown', (e) => {
@@ -1710,8 +1609,10 @@
         socket.on('gameEnd', ({ winner }) => {
             if (winner === playerId) {
                 showNotification('You Win!', 5000);
-            } else {
+            } else if (winner) {
                 showNotification(`Player ${winner.substring(0,6)} Wins!`, 5000);
+            } else {
+                showNotification('Game ended with no winner!', 5000);
             }
             isInRound = false;
             stopRoundTimer();
