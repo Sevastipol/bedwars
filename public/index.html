@@ -746,64 +746,40 @@
         function createProjectileMesh(data) {
             if (!enderpearlTexture) return null;
             
-            const geometry = new THREE.SphereGeometry(0.15, 16, 16);
-            const material = new THREE.MeshBasicMaterial({ 
+            // Create a billboard sprite for the enderpearl (like in Minecraft)
+            const spriteMaterial = new THREE.SpriteMaterial({ 
                 map: enderpearlTexture,
                 transparent: true,
-                opacity: 0.9
+                opacity: 0.9,
+                rotation: 0,
+                sizeAttenuation: false
             });
             
-            const projectile = new THREE.Mesh(geometry, material);
+            const projectile = new THREE.Sprite(spriteMaterial);
+            projectile.scale.set(0.6, 0.6, 1); // Make it slightly larger
             projectile.position.set(data.x, data.y, data.z);
-            projectile.userData = { id: data.id, type: 'enderpearl' };
+            projectile.userData = { 
+                id: data.id, 
+                type: 'enderpearl',
+                material: spriteMaterial
+            };
             scene.add(projectile);
             
-            // Add a particle trail effect
-            const trailGeometry = new THREE.BufferGeometry();
-            const trailMaterial = new THREE.PointsMaterial({
-                color: 0x00ff88,
-                size: 0.05,
-                transparent: true,
-                opacity: 0.6
+            // Store projectile with additional data for rotation
+            projectiles.set(data.id, { 
+                mesh: projectile, 
+                rotationSpeed: 0.15,
+                rotation: 0,
+                lastUpdate: Date.now()
             });
             
-            const trail = new THREE.Points(trailGeometry, trailMaterial);
-            trail.userData = { type: 'trail', parentId: data.id, points: [] };
-            scene.add(trail);
-            
-            projectiles.set(data.id, { mesh: projectile, trail, lastPositions: [] });
             return projectile;
-        }
-
-        function updateProjectileTrail(projectileId, newPosition) {
-            const projectile = projectiles.get(projectileId);
-            if (!projectile || !projectile.trail) return;
-            
-            // Add new position to trail
-            projectile.lastPositions.push(new THREE.Vector3(newPosition.x, newPosition.y, newPosition.z));
-            
-            // Keep only last 10 positions
-            if (projectile.lastPositions.length > 10) {
-                projectile.lastPositions.shift();
-            }
-            
-            // Update trail geometry
-            if (projectile.lastPositions.length > 1) {
-                const positions = [];
-                projectile.lastPositions.forEach(pos => {
-                    positions.push(pos.x, pos.y, pos.z);
-                });
-                
-                projectile.trail.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-                projectile.trail.geometry.attributes.position.needsUpdate = true;
-            }
         }
 
         function removeProjectileMesh(id) {
             const projectile = projectiles.get(id);
             if (projectile) {
                 if (projectile.mesh) scene.remove(projectile.mesh);
-                if (projectile.trail) scene.remove(projectile.trail);
                 projectiles.delete(id);
             }
         }
@@ -1220,17 +1196,17 @@
 
             const now = Date.now();
 
-            // Animate projectiles (client-side prediction)
+            // Animate projectiles (enderpearls)
             projectiles.forEach((projectileData, id) => {
                 if (projectileData.mesh) {
-                    // Make projectile spin slowly
-                    projectileData.mesh.rotation.x += 0.1;
-                    projectileData.mesh.rotation.y += 0.1;
+                    // Make the enderpearl sprite slowly rotate
+                    projectileData.rotation += projectileData.rotationSpeed * delta * 10;
+                    projectileData.mesh.userData.material.rotation = projectileData.rotation;
+                    projectileData.mesh.userData.material.needsUpdate = true;
                     
-                    // Fade trail over time
-                    if (projectileData.trail) {
-                        projectileData.trail.material.opacity = Math.max(0, projectileData.trail.material.opacity - 0.01);
-                    }
+                    // Add a subtle floating effect
+                    const floatOffset = Math.sin(now / 500 + id.length * 0.1) * 0.02;
+                    projectileData.mesh.position.y += floatOffset * delta * 2;
                 }
             });
 
@@ -1729,7 +1705,6 @@
                 const projectile = projectiles.get(data.id);
                 if (projectile && projectile.mesh) {
                     projectile.mesh.position.set(data.x, data.y, data.z);
-                    updateProjectileTrail(data.id, data);
                 }
             });
         });
