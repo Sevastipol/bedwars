@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -159,6 +158,7 @@ function startRoundTimer() {
         if (timeRemaining <= 0) {
             clearInterval(roundTimerInterval);
             roundTimerInterval = null;
+            gameState = 'ended';
             
             const activePlayers = getActivePlayers();
             if (activePlayers.length > 0) {
@@ -278,14 +278,13 @@ function resetGame() {
         p.spectator = true;
         p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 }; // Move to spectator area
         
-        io.to(id).emit('playerReset', {
-            pos: p.pos,
-            rot: p.rot,
-            inventory: p.inventory,
-            currency: p.currency
-        });
-        
         io.to(id).emit('setSpectator', true);
+        io.to(id).emit('respawn', {
+            pos: p.pos,
+            rot: p.rot
+        });
+        io.to(id).emit('updateInventory', p.inventory);
+        io.to(id).emit('updateCurrency', p.currency);
     });
     
     // Send world reset to all clients
@@ -633,6 +632,7 @@ io.on('connection', (socket) => {
                 const activePlayers = getActivePlayers();
                 if (activePlayers.length <= 1) {
                     // End game if only 0 or 1 active players left
+                    gameState = 'ended';
                     if (activePlayers.length === 1) {
                         const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
                         io.emit('gameEnd', { winner: winnerId });
@@ -640,7 +640,6 @@ io.on('connection', (socket) => {
                         io.emit('gameEnd', { winner: null });
                     }
                     stopRoundTimer();
-                    gameState = 'ended';
                     setTimeout(resetGame, 5000);
                 }
             }
@@ -712,18 +711,20 @@ setInterval(() => {
         });
 
         // Check for winner - only if game is still playing
-        const activePlayers = getActivePlayers();
-        if (activePlayers.length === 1 && gameState === 'playing') {
-            const winnerId = Array.from(players.entries()).find(([_, p]) => !p.spectator)[0];
-            io.emit('gameEnd', { winner: winnerId });
-            stopRoundTimer();
-            gameState = 'ended';
-            setTimeout(resetGame, 5000);
-        } else if (activePlayers.length === 0 && gameState === 'playing') {
-            io.emit('gameEnd', { winner: null });
-            stopRoundTimer();
-            gameState = 'ended';
-            setTimeout(resetGame, 5000);
+        if (gameState === 'playing') {
+            const activePlayers = getActivePlayers();
+            
+            // Only check for winner if we're in playing state
+            if (activePlayers.length <= 1) {
+                let winnerId = null;
+                if (activePlayers.length === 1) {
+                    winnerId = Array.from(players.entries()).find(([_, p]) => !p.spectator)[0];
+                }
+                io.emit('gameEnd', { winner: winnerId });
+                stopRoundTimer();
+                gameState = 'ended';
+                setTimeout(resetGame, 5000);
+            }
         }
     }
 
