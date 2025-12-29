@@ -672,31 +672,27 @@
             return spawner;
         }
 
-        // Function to create text above generator
+        // Function to create text above generator - MODIFIED: Only show count, no background
         function createGeneratorText(spawner) {
             // Create canvas for text
             const canvas = document.createElement('canvas');
-            canvas.width = 256;
-            canvas.height = 128;
+            canvas.width = 64;
+            canvas.height = 32;
             const context = canvas.getContext('2d');
-            
-            // Set up text properties
-            context.font = 'bold 24px Arial';
-            context.textAlign = 'center';
-            context.textBaseline = 'middle';
             
             // Create sprite with the canvas as texture
             const texture = new THREE.CanvasTexture(canvas);
+            // Set transparent background with no black square
             const spriteMaterial = new THREE.SpriteMaterial({ 
                 map: texture, 
                 transparent: true,
-                opacity: 0.8
+                opacity: 0.9
             });
             const sprite = new THREE.Sprite(spriteMaterial);
             
             // Position text above generator
             sprite.position.set(spawner.position.x, spawner.position.y + 1.5, spawner.position.z);
-            sprite.scale.set(2, 1, 1);
+            sprite.scale.set(0.8, 0.4, 1);
             sprite.userData = { type: 'generator_text', spawnerId: spawner.userData.id };
             
             scene.add(sprite);
@@ -706,12 +702,9 @@
             return sprite;
         }
 
-        // Function to update generator text
+        // Function to update generator text - MODIFIED: Only show count
         function updateGeneratorText(spawner) {
             if (!spawner.userData.textSprite || !spawner.userData.textTexture) return;
-            
-            const now = Date.now();
-            const timeUntilNext = Math.max(0, (spawner.userData.lastSpawn + spawner.userData.interval - now) / 1000);
             
             // Count resources underneath (within 2 blocks horizontally)
             let resourceCount = 0;
@@ -731,26 +724,15 @@
             const canvas = spawner.userData.textTexture.image;
             const context = canvas.getContext('2d');
             
-            // Clear canvas
+            // Clear canvas with transparent background
             context.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw background
-            context.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            context.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw resource type
-            context.fillStyle = getResourceColor(spawner.userData.resourceType);
-            context.fillText(spawner.userData.resourceType.toUpperCase(), canvas.width / 2, 30);
-            
-            // Draw time until next drop
-            context.fillStyle = '#ffffff';
-            context.font = '20px Arial';
-            context.fillText(`Next: ${timeUntilNext.toFixed(1)}s`, canvas.width / 2, 60);
-            
-            // Draw resource count
-            context.fillStyle = '#ffff88';
-            context.font = 'bold 22px Arial';
-            context.fillText(`${resourceCount} under`, canvas.width / 2, 90);
+            // Draw only the count - no background, no other text
+            context.font = 'bold 24px Arial';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillStyle = '#ffffff'; // White text
+            context.fillText(resourceCount.toString(), canvas.width / 2, canvas.height / 2);
             
             // Update texture
             spawner.userData.textTexture.needsUpdate = true;
@@ -1685,7 +1667,7 @@
             currency = data.currency;
             updateUI();
             velocity.set(0, 0, 0);
-            setSpectatorMode(false);
+            // Don't set spectator mode here - it will be set by setSpectator event
         });
 
         socket.on('setSpectator', (spectator) => {
