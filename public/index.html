@@ -11,7 +11,6 @@
             user-select: none;
         }
 
-        /* Centered Crosshair */
         #crosshair {
             position: absolute;
             top: 50%;
@@ -26,7 +25,6 @@
             z-index: 10;
         }
 
-        /* Timer Display */
         #timer {
             position: absolute;
             top: 20px;
@@ -43,7 +41,6 @@
             display: none;
         }
 
-        /* Top Left Stats */
         #stats {
             position: absolute;
             top: 80px;
@@ -71,7 +68,6 @@
             image-rendering: pixelated;
         }
 
-        /* Item Name Overlay */
         #item-name-overlay {
             position: absolute;
             bottom: 100px;
@@ -87,7 +83,6 @@
             z-index: 15;
         }
 
-        /* Breaking Progress Bar */
         #break-progress {
             position: absolute;
             top: 50%;
@@ -109,7 +104,6 @@
             transition: width 0.1s linear;
         }
 
-        /* Inventory Hotbar */
         #hotbar-container {
             position: absolute;
             bottom: 20px;
@@ -159,7 +153,6 @@
             color: #aaa;
         }
 
-        /* Shop UI */
         #shop {
             position: absolute;
             top: 50%;
@@ -227,7 +220,6 @@
             color: #ffff88 !important;
         }
 
-        /* Loading Screen */
         #loading {
             position: absolute;
             top: 0;
@@ -258,7 +250,6 @@
             z-index: 15;
         }
 
-        /* NEW: Spectator Indicator */
         #spectator-indicator {
             position: absolute;
             top: 50%;
@@ -276,7 +267,6 @@
             pointer-events: none;
         }
 
-        /* NEW: Waiting Message */
         #waiting-message {
             position: absolute;
             top: 50%;
@@ -294,14 +284,13 @@
             pointer-events: none;
         }
         
-        /* Fullscreen Click Overlay */
         #fullscreen-overlay {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.9);
             color: white;
             display: flex;
             flex-direction: column;
@@ -331,7 +320,7 @@
 <body>
     <!-- Fullscreen Overlay -->
     <div id="fullscreen-overlay" style="display: block;">
-        <h2>Welcome to Island Builder</h2>
+        <h2>Island Builder Multiplayer</h2>
         <p>Click the button below to enter fullscreen mode</p>
         <button id="enter-fullscreen">Enter Fullscreen</button>
     </div>
@@ -345,7 +334,7 @@
     <!-- Waiting Message -->
     <div id="waiting-message"></div>
     
-    <!-- Existing elements -->
+    <!-- Game Elements -->
     <div id="loading">Connecting to server...</div>
     <div id="crosshair"></div>
     <div id="stats">
@@ -403,7 +392,7 @@
         });
 
         // --- Game State ---
-        let isSpectator = true; // Start as spectator
+        let isSpectator = true;
         let roundTimeRemaining = 900;
         let roundTimerInterval = null;
         let isInRound = false;
@@ -419,7 +408,6 @@
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
-        const ISLAND_GAP = 18;
 
         // --- State ---
         let currency = { iron: 0, gold: 0, emerald: 0 };
@@ -451,15 +439,14 @@
             const elem = document.documentElement;
             if (elem.requestFullscreen) {
                 elem.requestFullscreen();
-            } else if (elem.webkitRequestFullscreen) { /* Safari */
+            } else if (elem.webkitRequestFullscreen) {
                 elem.webkitRequestFullscreen();
-            } else if (elem.msRequestFullscreen) { /* IE11 */
+            } else if (elem.msRequestFullscreen) {
                 elem.msRequestFullscreen();
             }
             
             document.getElementById('fullscreen-overlay').style.display = 'none';
             
-            // Auto-lock mouse after entering fullscreen
             setTimeout(() => {
                 if (!controls.isLocked && !isShopOpen()) {
                     controls.lock();
@@ -467,24 +454,20 @@
             }, 500);
         }
 
-        // Check if we're already in fullscreen
         function isFullscreen() {
             return document.fullscreenElement || 
                    document.webkitFullscreenElement || 
                    document.msFullscreenElement;
         }
 
-        // Auto-enter fullscreen on click
         document.getElementById('enter-fullscreen').addEventListener('click', enterFullscreen);
         
-        // Also allow clicking anywhere on the overlay
         document.getElementById('fullscreen-overlay').addEventListener('click', (e) => {
             if (e.target.id !== 'enter-fullscreen') {
                 enterFullscreen();
             }
         });
 
-        // Check if already in fullscreen
         document.addEventListener('fullscreenchange', () => {
             if (isFullscreen()) {
                 document.getElementById('fullscreen-overlay').style.display = 'none';
@@ -549,8 +532,7 @@
                 velocity.y = 0;
                 onGround = true;
                 
-                // Auto-lock mouse in spectator mode
-                if (!controls.isLocked && isFullscreen() && !isShopOpen()) {
+                if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
                     setTimeout(() => {
                         if (!controls.isLocked && !isShopOpen()) {
                             controls.lock();
@@ -567,8 +549,7 @@
                     document.getElementById('timer').style.display = 'block';
                 }
                 
-                // Auto-lock mouse when becoming active player
-                if (!controls.isLocked && isFullscreen() && !isShopOpen()) {
+                if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
                     setTimeout(() => {
                         if (!controls.isLocked && !isShopOpen()) {
                             controls.lock();
@@ -612,7 +593,7 @@
         let emeraldTexture = null;
         let breakingTextures = [];
 
-        // Texture URLs - FIXED: Using same URLs for block textures and icons
+        // Fixed texture URLs - same for blocks and icons
         const TEXTURE_URLS = {
             grass: 'https://i.ibb.co/394nfmMz/pixilart-drawing-3.png',
             wood: 'https://i.ibb.co/KpWBZRPS/pixilart-drawing-2.png',
@@ -623,7 +604,6 @@
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png'
         };
 
-        // Load all textures
         textureLoader.load(TEXTURE_URLS.grass, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -753,7 +733,6 @@
             );
             spawner.position.set(x, y, z);
             
-            // Store spawner data with additional properties
             const spawnerData = {
                 type: 'spawner',
                 resourceType: resourceType,
@@ -761,13 +740,12 @@
                 lastSpawn: lastSpawn || Date.now(),
                 x: x, y: y, z: z,
                 id: `${x}-${y}-${z}-${resourceType}`,
-                count: 0, // Count of resources underneath
+                count: 0,
                 textSprite: null,
                 textTexture: null
             };
             spawner.userData = spawnerData;
             
-            // Create text sprite for the generator
             createGeneratorText(spawner);
             
             scene.add(spawner);
@@ -775,17 +753,13 @@
             return spawner;
         }
 
-        // Function to create text above generator - MODIFIED: Only show count, no background
         function createGeneratorText(spawner) {
-            // Create canvas for text
             const canvas = document.createElement('canvas');
             canvas.width = 64;
             canvas.height = 32;
             const context = canvas.getContext('2d');
             
-            // Create sprite with the canvas as texture
             const texture = new THREE.CanvasTexture(canvas);
-            // Set transparent background with no black square
             const spriteMaterial = new THREE.SpriteMaterial({ 
                 map: texture, 
                 transparent: true,
@@ -793,7 +767,6 @@
             });
             const sprite = new THREE.Sprite(spriteMaterial);
             
-            // Position text above generator
             sprite.position.set(spawner.position.x, spawner.position.y + 1.5, spawner.position.z);
             sprite.scale.set(0.8, 0.4, 1);
             sprite.userData = { type: 'generator_text', spawnerId: spawner.userData.id };
@@ -805,11 +778,9 @@
             return sprite;
         }
 
-        // Function to update generator text - MODIFIED: Only show count
         function updateGeneratorText(spawner) {
             if (!spawner.userData.textSprite || !spawner.userData.textTexture) return;
             
-            // Count resources underneath (within 2 blocks horizontally)
             let resourceCount = 0;
             resourcePickups.forEach(pickup => {
                 if (pickup.userData.resourceType === spawner.userData.resourceType) {
@@ -823,31 +794,18 @@
             
             spawner.userData.count = resourceCount;
             
-            // Update canvas texture
             const canvas = spawner.userData.textTexture.image;
             const context = canvas.getContext('2d');
             
-            // Clear canvas with transparent background
             context.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw only the count - no background, no other text
             context.font = 'bold 24px Arial';
             context.textAlign = 'center';
             context.textBaseline = 'middle';
-            context.fillStyle = '#ffffff'; // White text
+            context.fillStyle = '#ffffff';
             context.fillText(resourceCount.toString(), canvas.width / 2, canvas.height / 2);
             
-            // Update texture
             spawner.userData.textTexture.needsUpdate = true;
-        }
-
-        function getResourceColor(resourceType) {
-            switch(resourceType) {
-                case 'iron': return '#a0a0a0';
-                case 'gold': return '#ffd700';
-                case 'emerald': return '#00ff88';
-                default: return '#ffffff';
-            }
         }
 
         function addPickupMesh(data) {
@@ -898,12 +856,10 @@
         const moveState = { fwd: false, bwd: false, l: false, r: false };
         let onGround = false;
 
-        // Check if shop is open
         function isShopOpen() {
             return document.getElementById('shop').style.display === 'block';
         }
 
-        // Event listeners - FIXED: Auto-lock mouse for spectators
         document.addEventListener('keydown', (e) => {
             if (!isFullscreen()) return;
             
@@ -995,7 +951,6 @@
             }
             
             if (isSpectator) {
-                // Allow spectators to lock mouse by clicking
                 if (!controls.isLocked && !isShopOpen()) {
                     controls.lock();
                 }
@@ -1088,7 +1043,6 @@
 
         document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        // Collision functions
         function checkCollision(pos) {
             if (isSpectator) return false;
             
@@ -1130,7 +1084,6 @@
             const delta = Math.min((time - prevTime) / 1000, 0.05);
             prevTime = time;
 
-            // Update generator text every 100ms (not every frame for performance)
             if (time - lastGeneratorUpdate > 100) {
                 resourceSpawners.forEach(spawner => {
                     updateGeneratorText(spawner);
@@ -1138,7 +1091,6 @@
                 lastGeneratorUpdate = time;
             }
 
-            // Breaking logic
             if (isBreaking && breakingBlock && !isSpectator) {
                 const elapsed = Date.now() - breakingStartTime;
                 const progress = Math.min((elapsed / breakingDuration) * 100, 100);
@@ -1170,7 +1122,6 @@
 
             const now = Date.now();
 
-            // Spawners animation
             resourceSpawners.forEach(spawner => {
                 const pulseSpeed = 2;
                 const pulseAmount = 0.1;
@@ -1178,7 +1129,6 @@
                 spawner.scale.set(scale, scale, scale);
             });
 
-            // Resource pickups animation
             for (let i = resourcePickups.length - 1; i >= 0; i--) {
                 const pickup = resourcePickups[i];
                 
@@ -1194,7 +1144,6 @@
                 }
             }
 
-            // Movement and physics
             if (controls.isLocked) {
                 if (isSpectator) {
                     const direction = new THREE.Vector3();
@@ -1280,8 +1229,7 @@
                 }
             }
 
-            // Player update send
-            if (controls.isLocked && socket.connected && time - lastPlayerUpdate > PLAYER_UPDATE_RATE) {
+            if (controls.isLocked && socket.connected && time - lastPlayerUpdate > 50) {
                 socket.emit('playerUpdate', {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
@@ -1292,7 +1240,6 @@
                 lastPlayerUpdate = time;
             }
 
-            // Other players lerp
             otherPlayers.forEach((data) => {
                 if (data.spectator) {
                     data.group.visible = false;
@@ -1314,9 +1261,7 @@
         }
 
         let lastPlayerUpdate = 0;
-        const PLAYER_UPDATE_RATE = 50;
 
-        // Inventory functions
         function addToInventory(blockType, amount) {
             for (let i = 0; i < INVENTORY_SIZE; i++) {
                 if (inventory[i] && inventory[i].type === blockType && inventory[i].count < MAX_STACK) {
@@ -1345,15 +1290,6 @@
             }
             updateUI();
             return amount === 0;
-        }
-
-        function removeFromHand() {
-            const slot = inventory[selectedSlotIndex];
-            if (slot) {
-                slot.count--;
-                if (slot.count <= 0) inventory[selectedSlotIndex] = null;
-                updateUI();
-            }
         }
 
         function selectSlot(index) {
@@ -1398,7 +1334,7 @@
                     if (blockData.hasTexture) {
                         const icon = document.createElement('img');
                         icon.className = 'block-icon';
-                        // FIXED: Use same texture URLs as block textures
+                        // FIXED: Using same texture URLs as 3D blocks
                         if (slot.type === 'Grass') icon.src = TEXTURE_URLS.grass;
                         else if (slot.type === 'Wood') icon.src = TEXTURE_URLS.wood;
                         else if (slot.type === 'Stone') icon.src = TEXTURE_URLS.stone;
@@ -1427,12 +1363,6 @@
                 if (currency[resource] < amount) return false;
             }
             return true;
-        }
-
-        function deductCurrency(cost) {
-            for (let [resource, amount] of Object.entries(cost)) {
-                currency[resource] -= amount;
-            }
         }
 
         function renderShop() {
@@ -1465,11 +1395,9 @@
             const isVisible = shop.style.display === 'block';
             
             if (isVisible) {
-                // Shop is closing, hide it and lock mouse
                 shop.style.display = 'none';
                 controls.lock();
             } else {
-                // Shop is opening, show it and unlock mouse
                 shop.style.display = 'block';
                 controls.unlock();
                 renderShop();
@@ -1490,14 +1418,12 @@
             const group = new THREE.Group();
             group.name = id;
 
-            // Head
             const headGeo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
             const headMat = new THREE.MeshLambertMaterial({ color: 0xffdbac });
             const head = new THREE.Mesh(headGeo, headMat);
             head.position.y = 1.4;
             group.add(head);
 
-            // Body
             const bodyGeo = new THREE.BoxGeometry(0.6, 0.8, 0.3);
             const bodyColor = getPlayerColor(id);
             const bodyMat = new THREE.MeshLambertMaterial({ color: bodyColor });
@@ -1505,7 +1431,6 @@
             body.position.y = 0.7;
             group.add(body);
 
-            // Arms
             const armGeo = new THREE.BoxGeometry(0.25, 0.8, 0.25);
             const armMat = bodyMat;
             const leftArm = new THREE.Mesh(armGeo, armMat);
@@ -1516,7 +1441,6 @@
             rightArm.position.set(-0.5, 0.7, 0);
             group.add(rightArm);
 
-            // Legs
             const legGeo = new THREE.BoxGeometry(0.3, 0.8, 0.3);
             const legMat = new THREE.MeshLambertMaterial({ color: 0x333366 });
             const leftLeg = new THREE.Mesh(legGeo, legMat);
@@ -1527,7 +1451,6 @@
             rightLeg.position.set(-0.2, 0, 0);
             group.add(rightLeg);
 
-            // Name tag
             const canvas = document.createElement('canvas');
             canvas.width = 256;
             canvas.height = 64;
@@ -1579,24 +1502,21 @@
         // Socket events
         socket.on('yourId', (id) => {
             playerId = id;
-            // Start as spectator
             setSpectatorMode(true);
         });
 
-        socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, gameState: serverGameState, playersNeeded }) => {
+        socket.on('initWorld', ({ blocks, pickups, spawners: initSpawners, gameActive, playersNeeded }) => {
             blocks.forEach(({ x, y, z, type }) => addBlockMesh(x, y, z, type));
             pickups.forEach(addPickupMesh);
             initSpawners.forEach(s => {
                 const spawnerMesh = addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval, s.lastSpawn);
-                // Update spawner data with server's lastSpawn
                 if (s.lastSpawn) {
                     spawnerMesh.userData.lastSpawn = s.lastSpawn;
                 }
             });
             
-            if (serverGameState === 'waiting') {
-                updateWaitingMessage(playersNeeded);
-            }
+            isInRound = gameActive;
+            updateWaitingMessage(playersNeeded);
         });
 
         socket.on('playersSnapshot', (others) => {
@@ -1669,7 +1589,6 @@
         });
 
         socket.on('removePlayer', (id) => {
-            // Remove the player's character from the scene
             removeOtherPlayer(id);
         });
 
@@ -1699,16 +1618,13 @@
         });
 
         socket.on('assignBed', (data) => {
-            // Player gets assigned a bed and becomes active player
             showNotification(`Assigned to Iron Island!`, 3000);
             setSpectatorMode(false);
             
-            // Teleport to assigned island
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
             camera.rotation.set(data.rot.pitch, data.rot.yaw, 0);
             velocity.set(0, 0, 0);
             
-            // Update inventory and currency
             inventory = data.inventory;
             currency = data.currency;
             updateUI();
@@ -1724,27 +1640,22 @@
             }
             isInRound = false;
             stopRoundTimer();
-            setSpectatorMode(true); // Become spectator after game ends
+            setSpectatorMode(true);
         });
 
         socket.on('worldReset', (data) => {
-            console.log('World reset received, clearing all blocks...');
-            
-            // Remove all existing blocks
             blocksInScene.forEach((m) => {
                 scene.remove(m);
             });
             blocksInScene.length = 0;
             blocksMeshes.clear();
             
-            // Remove all pickups
             resourcePickups.forEach((m) => {
                 scene.remove(m);
             });
             resourcePickups.length = 0;
             pickupMeshes.clear();
             
-            // Remove all spawners and their text sprites
             resourceSpawners.forEach((spawner) => {
                 scene.remove(spawner);
                 if (spawner.userData.textSprite) {
@@ -1753,21 +1664,17 @@
             });
             resourceSpawners.length = 0;
             
-            // Clear other players
             otherPlayers.forEach((op, id) => {
                 scene.remove(op.group);
             });
             otherPlayers.clear();
             
-            // Add new blocks from server
             data.blocks.forEach(({ x, y, z, type }) => {
                 addBlockMesh(x, y, z, type);
             });
             
-            // Add new pickups
             data.pickups.forEach(addPickupMesh);
             
-            // Add new spawners
             data.spawners.forEach((s) => {
                 const spawnerMesh = addResourceSpawner(s.x, s.y, s.z, s.resourceType, s.interval, s.lastSpawn);
                 if (s.lastSpawn) {
@@ -1775,7 +1682,6 @@
                 }
             });
             
-            // Reset to spectator mode after world reset
             setSpectatorMode(true);
         });
 
@@ -1786,7 +1692,6 @@
             currency = data.currency;
             updateUI();
             velocity.set(0, 0, 0);
-            // Don't set spectator mode here - it will be set by setSpectator event
         });
 
         socket.on('setSpectator', (spectator) => {
@@ -1807,14 +1712,10 @@
             }
         });
 
-        // Start as spectator
+        // Start
         setSpectatorMode(true);
         updateUI();
-        
-        // Auto-start animation after a short delay
-        setTimeout(() => {
-            animate();
-        }, 100);
+        animate();
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
