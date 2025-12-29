@@ -11,7 +11,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => console.log(`Server on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // Config
 const BLOCK_TYPES = {
@@ -33,12 +33,12 @@ const blocks = new Map();
 const pickups = new Map();
 const spawners = [];
 const players = new Map();
-let gameActive = false; // Simple boolean for game state
+let gameActive = false;
 let countdownTimer = null;
 let roundStartTime = null;
 let suddenDeath = false;
 let roundTimerInterval = null;
-let checkPlayersInterval = null; // Interval to check player count
+let playerCheckInterval = null;
 
 // Iron island positions (4 islands)
 const ironIslands = [
@@ -276,7 +276,7 @@ function resetGame() {
         p.lastRespawn = 0;
         p.bedPos = null;
         p.spectator = true;
-        p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 }; // Move to spectator area
+        p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -304,24 +304,25 @@ function resetGame() {
     roundStartTime = null;
     stopRoundTimer();
     
-    // Restart player checking
-    startPlayerChecking();
+    // Start checking for players
+    startPlayerCheck();
 }
 
-// Start checking for players to start game
-function startPlayerChecking() {
+function startPlayerCheck() {
     // Clear existing interval
-    if (checkPlayersInterval) {
-        clearInterval(checkPlayersInterval);
+    if (playerCheckInterval) {
+        clearInterval(playerCheckInterval);
     }
     
-    checkPlayersInterval = setInterval(() => {
+    // Check every second if game should start
+    playerCheckInterval = setInterval(() => {
         if (!gameActive) {
-            const activePlayers = getActivePlayers();
             const totalPlayers = players.size;
+            const activePlayers = getActivePlayers();
             
-            console.log(`Checking players: ${activePlayers.length} active, ${totalPlayers} total`);
+            console.log(`Player check: ${totalPlayers} total, ${activePlayers.length} active`);
             
+            // If we have enough players and countdown isn't running, start countdown
             if (totalPlayers >= REQUIRED_PLAYERS && activePlayers.length < REQUIRED_PLAYERS && !countdownTimer) {
                 console.log('Starting countdown...');
                 let count = 10;
@@ -335,20 +336,18 @@ function startPlayerChecking() {
                         clearInterval(countdownTimer);
                         countdownTimer = null;
                         
-                        // Assign beds and teleport players to islands
+                        // Assign beds to all spectators
                         const assignedPlayers = [];
                         players.forEach((p, id) => {
                             if (p.spectator) {
                                 const assignment = assignPlayerToIsland(id);
                                 if (assignment) {
-                                    // Update player state
                                     p.spectator = false;
                                     p.pos = assignment.pos;
                                     p.rot = assignment.rot;
                                     p.bedPos = assignment.bedPos;
                                     assignedPlayers.push(id);
                                     
-                                    // Send player their new state
                                     io.to(id).emit('assignBed', assignment);
                                     io.to(id).emit('setSpectator', false);
                                 }
@@ -369,7 +368,7 @@ function startPlayerChecking() {
                             
                             io.emit('gameStart');
                         } else {
-                            // Not enough players got assigned, cancel game
+                            // Not enough players, cancel game
                             io.emit('notification', 'Not enough players assigned. Waiting...');
                             assignedPlayers.forEach(id => {
                                 const p = players.get(id);
@@ -379,14 +378,14 @@ function startPlayerChecking() {
                             });
                             // Free up occupied islands
                             occupiedIronIslands = [];
-                            // Reset world to remove any beds that were placed
+                            // Reset world
                             initWorld();
                         }
                     }
                 }, 1000);
             }
         }
-    }, 1000); // Check every second
+    }, 1000);
 }
 
 // Socket connections
@@ -395,7 +394,7 @@ io.on('connection', (socket) => {
     
     // New players always start as spectators
     const playerState = {
-        pos: { x: 9 + 2.5, y: 50, z: 9 + 2.5 }, // Spectator area
+        pos: { x: 9 + 2.5, y: 50, z: 9 + 2.5 },
         rot: { yaw: 0, pitch: 0 },
         crouch: false,
         inventory: new Array(INVENTORY_SIZE).fill(null),
@@ -403,7 +402,8 @@ io.on('connection', (socket) => {
         selected: 0,
         bedPos: null,
         lastRespawn: 0,
-        spectator: true // Start as spectator
+        spectator: true,
+        id: socket.id
     };
     
     players.set(socket.id, playerState);
@@ -459,9 +459,9 @@ io.on('connection', (socket) => {
     // Update waiting message
     updateWaitingMessages();
 
-    // If this is the first player, start checking for players
-    if (!checkPlayersInterval) {
-        startPlayerChecking();
+    // If this is first player, start player check
+    if (!playerCheckInterval) {
+        startPlayerCheck();
     }
 
     socket.on('playerUpdate', (data) => {
@@ -516,7 +516,6 @@ io.on('connection', (socket) => {
                 return;
             }
             
-            // Bed destruction - just remove it without giving block
             removeBlock(x, y, z);
             return;
         }
@@ -626,10 +625,7 @@ io.on('connection', (socket) => {
                 }
             }
             
-            // Remove player from players map
             players.delete(socket.id);
-            
-            // Notify all other clients to remove this player
             io.emit('removePlayer', socket.id);
             
             updateWaitingMessages();
@@ -641,16 +637,13 @@ io.on('connection', (socket) => {
                     clearInterval(countdownTimer);
                     countdownTimer = null;
                     io.emit('notification', 'Player left. Countdown cancelled.');
-                    // Free up any occupied islands
                     occupiedIronIslands = [];
-                    // Reset world
                     initWorld();
                 }
             } else if (gameActive) {
                 // Check if game should end due to lack of players
                 const activePlayers = getActivePlayers();
                 if (activePlayers.length <= 1) {
-                    // End game if only 0 or 1 active players left
                     gameActive = false;
                     if (activePlayers.length === 1) {
                         const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
@@ -671,7 +664,7 @@ setInterval(() => {
     const now = Date.now();
     
     if (gameActive) {
-        // Only spawn resources during game
+        // Spawn resources
         spawners.forEach((s) => {
             if (now - s.lastSpawn >= s.interval) {
                 spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
@@ -702,14 +695,14 @@ setInterval(() => {
                     p.rot.pitch = 0;
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                 } else {
-                    // Player eliminated - become spectator
+                    // Player eliminated
                     p.spectator = true;
                     p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
                     io.to(id).emit('setSpectator', true);
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                     io.to(id).emit('notification', 'Eliminated! You are now a spectator.');
                     
-                    // Free up their island
+                    // Free up island
                     if (p.bedPos) {
                         for (let i = 0; i < ironIslands.length; i++) {
                             if (ironIslands[i].bedX === p.bedPos.x && 
@@ -754,5 +747,5 @@ setInterval(() => {
     io.emit('playersUpdate', states);
 }, 50);
 
-// Start player checking on server start
-startPlayerChecking();
+// Start player check on server start
+startPlayerCheck();
