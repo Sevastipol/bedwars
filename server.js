@@ -613,7 +613,7 @@ io.on('connection', (socket) => {
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
     });
 
-    // Player combat
+    // Player combat - FIXED BUGS HERE
     socket.on('hitPlayer', (targetId) => {
         const attacker = players.get(socket.id);
         const target = players.get(targetId);
@@ -637,13 +637,15 @@ io.on('connection', (socket) => {
         target.health -= 1;
         attacker.lastHitTime = now;
         
-        // Apply knockback (0.5 blocks)
+        // FIX #1: Apply knockback (0.5 blocks) to TARGET, not attacker
+        // Direction should be from attacker to target (target gets pushed away from attacker)
         const knockback = 0.5;
         const dirX = dx / dist;
         const dirZ = dz / dist;
         
-        target.pos.x += dirX * knockback;
-        target.pos.z += dirZ * knockback;
+        // Push target AWAY from attacker (opposite direction of dx, dz)
+        target.pos.x -= dirX * knockback;
+        target.pos.z -= dirZ * knockback;
         
         // Send health update to all clients
         io.emit('playerHit', {
@@ -654,45 +656,79 @@ io.on('connection', (socket) => {
         
         // Check if target is eliminated
         if (target.health <= 0) {
-            target.spectator = true;
-            target.health = PLAYER_MAX_HEALTH;
-            target.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
+            // FIX #2: Check if target has a bed and it's not destroyed
+            const bedKey = target.bedPos ? blockKey(target.bedPos.x, target.bedPos.y, target.bedPos.z) : null;
+            const hasBed = target.bedPos && blocks.get(bedKey) === 'Bed';
             
-            // Free up island if target had a bed
-            if (target.bedPos) {
-                for (let i = 0; i < ironIslands.length; i++) {
-                    if (ironIslands[i].bedX === target.bedPos.x && 
-                        ironIslands[i].bedY === target.bedPos.y && 
-                        ironIslands[i].bedZ === target.bedPos.z) {
-                        const index = occupiedIronIslands.indexOf(i);
-                        if (index > -1) {
-                            occupiedIronIslands.splice(index, 1);
+            if (hasBed) {
+                // Player has a bed, respawn them at bed
+                target.health = PLAYER_MAX_HEALTH;
+                target.pos.x = target.bedPos.x + 0.5;
+                target.pos.y = target.bedPos.y + 2;
+                target.pos.z = target.bedPos.z + 0.5;
+                target.rot.yaw = 0;
+                target.rot.pitch = 0;
+                
+                // Send respawn event to the player
+                io.to(targetId).emit('respawn', { 
+                    pos: target.pos, 
+                    rot: target.rot 
+                });
+                
+                // Update health for everyone
+                io.emit('playerHit', {
+                    attackerId: null, // No attacker for respawn
+                    targetId: target.id,
+                    newHealth: target.health
+                });
+                
+                io.to(targetId).emit('notification', 'You died and respawned at your bed!');
+            } else {
+                // Player eliminated - no bed
+                target.spectator = true;
+                target.health = PLAYER_MAX_HEALTH;
+                target.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
+                
+                io.to(targetId).emit('setSpectator', true);
+                io.to(targetId).emit('respawn', { 
+                    pos: target.pos, 
+                    rot: target.rot 
+                });
+                io.to(targetId).emit('notification', 'Eliminated! You are now a spectator.');
+                
+                // Free up island
+                if (target.bedPos) {
+                    for (let i = 0; i < ironIslands.length; i++) {
+                        if (ironIslands[i].bedX === target.bedPos.x && 
+                            ironIslands[i].bedY === target.bedPos.y && 
+                            ironIslands[i].bedZ === target.bedPos.z) {
+                            const index = occupiedIronIslands.indexOf(i);
+                            if (index > -1) {
+                                occupiedIronIslands.splice(index, 1);
+                            }
+                            break;
                         }
-                        break;
                     }
+                    target.bedPos = null;
                 }
-                target.bedPos = null;
-            }
-            
-            io.to(targetId).emit('setSpectator', true);
-            io.to(targetId).emit('respawn', { pos: target.pos, rot: target.rot });
-            
-            io.emit('playerEliminated', {
-                eliminatedId: targetId,
-                eliminatorId: attacker.id
-            });
-            
-            // Check if game should end
-            const activePlayers = getActivePlayers();
-            if (activePlayers.length <= 1) {
-                gameActive = false;
-                let winnerId = null;
-                if (activePlayers.length === 1) {
-                    winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
+                
+                io.emit('playerEliminated', {
+                    eliminatedId: targetId,
+                    eliminatorId: attacker.id
+                });
+                
+                // Check if game should end
+                const activePlayers = getActivePlayers();
+                if (activePlayers.length <= 1) {
+                    gameActive = false;
+                    let winnerId = null;
+                    if (activePlayers.length === 1) {
+                        winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
+                    }
+                    io.emit('gameEnd', { winner: winnerId });
+                    stopRoundTimer();
+                    setTimeout(resetGame, 5000);
                 }
-                io.emit('gameEnd', { winner: winnerId });
-                stopRoundTimer();
-                setTimeout(resetGame, 5000);
             }
         }
     });
@@ -908,20 +944,26 @@ setInterval(() => {
             io.emit('updateEnderpearl', pearlUpdates);
         }
 
-        // Check for death/respawn
+        // Check for death/respawn (for falling into void)
         players.forEach((p, id) => {
             if (p.spectator) return;
             
             if (p.pos.y < -30 && now - p.lastRespawn > 2000) {
-                if (p.bedPos && blocks.get(blockKey(p.bedPos.x, p.bedPos.y, p.bedPos.z)) === 'Bed') {
+                // Check if player has a bed
+                const bedKey = p.bedPos ? blockKey(p.bedPos.x, p.bedPos.y, p.bedPos.z) : null;
+                const hasBed = p.bedPos && blocks.get(bedKey) === 'Bed';
+                
+                if (hasBed) {
+                    // Respawn at bed
                     p.pos.x = p.bedPos.x + 0.5;
                     p.pos.y = p.bedPos.y + 2;
                     p.pos.z = p.bedPos.z + 0.5;
                     p.rot.yaw = 0;
                     p.rot.pitch = 0;
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
+                    io.to(id).emit('notification', 'You fell into the void and respawned at your bed!');
                 } else {
-                    // Player eliminated
+                    // Player eliminated - no bed
                     p.spectator = true;
                     p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
                     io.to(id).emit('setSpectator', true);
