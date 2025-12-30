@@ -172,7 +172,7 @@
 
         .shop-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
             margin-top: 15px;
         }
@@ -325,7 +325,6 @@
             background: #45a049;
         }
 
-        /* Health bar for players */
         .health-bar {
             position: absolute;
             top: -20px;
@@ -396,7 +395,7 @@
     <div id="hotbar-container"></div>
     <div id="shop">
         <h2>Construction Shop</h2>
-        <div style="color: #aaa; font-size: 0.9em; margin-bottom: 10px;">Click to buy blocks</div>
+        <div style="color: #aaa; font-size: 0.9em; margin-bottom: 10px;">Click to buy blocks and weapons</div>
         <div class="shop-grid" id="shop-container"></div>
         <p style="color: #888; margin-top: 20px; font-size: 0.8em;">Press [B] to Close</p>
     </div>
@@ -438,7 +437,10 @@
             'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
             'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
             'Bed': { color: 0xff0000, breakTime: 2, buyAmount: 1, hasTexture: false },
-            'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true }
+            'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Wooden Sword': { color: 0x8B4513, cost: { iron: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
+            'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
+            'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 5, hasTexture: true }
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
@@ -464,11 +466,15 @@
         // Crouching state
         let isCrouching = false;
 
+        // Sword in hand
+        let swordInHand = null;
+
         let playerId = null;
         let blocksMeshes = new Map();
         let pickupMeshes = new Map();
         let otherPlayers = new Map();
         let playerHealth = new Map(); // Store player health locally
+        let playerSwords = new Map(); // Store sword meshes for other players
 
         // --- Fullscreen Functions ---
         function enterFullscreen() {
@@ -568,6 +574,12 @@
                 velocity.y = 0;
                 onGround = true;
                 
+                // Remove sword from hand
+                if (swordInHand) {
+                    scene.remove(swordInHand);
+                    swordInHand = null;
+                }
+                
                 if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
                     setTimeout(() => {
                         if (!controls.isLocked && !isShopOpen()) {
@@ -584,6 +596,9 @@
                 if (isInRound) {
                     document.getElementById('timer').style.display = 'block';
                 }
+                
+                // Update sword in hand
+                updateSwordInHand();
                 
                 if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
                     setTimeout(() => {
@@ -628,9 +643,12 @@
         let goldTexture = null;
         let emeraldTexture = null;
         let enderpearlTexture = null;
+        let woodenSwordTexture = null;
+        let ironSwordTexture = null;
+        let emeraldSwordTexture = null;
         let breakingTextures = [];
 
-        // Fixed texture URLs - same for blocks and icons
+        // Fixed texture URLs
         const TEXTURE_URLS = {
             grass: 'https://i.ibb.co/394nfmMz/pixilart-drawing-3.png',
             wood: 'https://i.ibb.co/KpWBZRPS/pixilart-drawing-2.png',
@@ -639,7 +657,10 @@
             iron: 'https://i.ibb.co/n87Ym7RY/pixilart-drawing-7.png',
             gold: 'https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png',
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png',
-            enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png'
+            enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png',
+            woodenSword: 'https://i.ibb.co/mLZmwsJ/pixil-frame-0-10.png',
+            ironSword: 'https://i.ibb.co/F4NZLPzj/pixil-frame-0-11.png',
+            emeraldSword: 'https://i.ibb.co/przKkdMP/pixil-frame-0-12.png'
         };
 
         // Load textures
@@ -697,6 +718,24 @@
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             enderpearlTexture = texture;
+        });
+
+        textureLoader.load(TEXTURE_URLS.woodenSword, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            woodenSwordTexture = texture;
+        });
+
+        textureLoader.load(TEXTURE_URLS.ironSword, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            ironSwordTexture = texture;
+        });
+
+        textureLoader.load(TEXTURE_URLS.emeraldSword, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            emeraldSwordTexture = texture;
         });
 
         // Load breaking textures
@@ -764,26 +803,23 @@
             }
         }
 
-        // --- Enderpearl Functions (Minecraft-style with sprite) ---
+        // --- Enderpearl Functions (Minecraft-style) ---
         function createEnderpearlMesh(data) {
             if (!enderpearlTexture) return null;
             
-            // Create a sprite (billboard) for the enderpearl with size attenuation
             const spriteMaterial = new THREE.SpriteMaterial({ 
                 map: enderpearlTexture,
                 transparent: true,
                 opacity: 0.9,
-                sizeAttenuation: true  // Enable size attenuation for distance-based scaling
+                sizeAttenuation: true
             });
             
             const pearl = new THREE.Sprite(spriteMaterial);
             pearl.position.set(data.x, data.y, data.z);
             
-            // Initial base size - will be adjusted based on distance
             const baseScale = 0.3;
             pearl.scale.set(baseScale, baseScale, 1);
             
-            // Store data for updating - NO SPINNING DATA
             pearl.userData = { 
                 id: data.id, 
                 type: 'enderpearl',
@@ -791,7 +827,6 @@
             };
             scene.add(pearl);
             
-            // Store for updates
             projectiles.set(data.id, pearl);
             
             return pearl;
@@ -801,25 +836,15 @@
             const pearl = projectiles.get(id);
             if (pearl) {
                 pearl.position.set(position.x, position.y, position.z);
-                
-                // Make sprite always face camera (billboard effect)
                 pearl.lookAt(camera.position);
                 
-                // Calculate distance from camera
                 const distance = camera.position.distanceTo(pearl.position);
-                
-                // Scale based on distance: closer = bigger, farther = smaller
-                // Using inverse relationship: scale = baseScale * (constant / distance)
                 const baseScale = pearl.userData.baseScale || 0.3;
-                const constant = 5; // Adjust this to control scaling sensitivity
+                const constant = 5;
                 let scale = baseScale * (constant / Math.max(1, distance));
-                
-                // Clamp the scale to reasonable limits
                 scale = Math.max(0.1, Math.min(scale, 1.0));
                 
                 pearl.scale.set(scale, scale, 1);
-                
-                // NO SPINNING - removed rotation update
             }
         }
 
@@ -828,6 +853,71 @@
             if (pearl) {
                 scene.remove(pearl);
                 projectiles.delete(id);
+            }
+        }
+
+        // --- Sword Functions ---
+        function createSwordMesh(type, playerId = null) {
+            let texture = null;
+            if (type === 'Wooden Sword' && woodenSwordTexture) texture = woodenSwordTexture;
+            else if (type === 'Iron Sword' && ironSwordTexture) texture = ironSwordTexture;
+            else if (type === 'Emerald Sword' && emeraldSwordTexture) texture = emeraldSwordTexture;
+            
+            if (!texture) return null;
+            
+            const material = new THREE.SpriteMaterial({ 
+                map: texture,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            const sword = new THREE.Sprite(material);
+            sword.scale.set(0.5, 0.5, 1);
+            
+            if (playerId) {
+                sword.userData = { type: 'sword', playerId: playerId, swordType: type };
+            }
+            
+            return sword;
+        }
+
+        function updateSwordInHand() {
+            // Remove existing sword
+            if (swordInHand) {
+                scene.remove(swordInHand);
+                swordInHand = null;
+            }
+            
+            // Check if current slot has a sword
+            const currentSlot = inventory[selectedSlotIndex];
+            if (currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon) {
+                swordInHand = createSwordMesh(currentSlot.type);
+                if (swordInHand) {
+                    scene.add(swordInHand);
+                }
+            }
+        }
+
+        function updateOtherPlayerSword(playerId, swordType) {
+            const op = otherPlayers.get(playerId);
+            if (!op || !op.group) return;
+            
+            // Remove existing sword
+            if (playerSwords.has(playerId)) {
+                const oldSword = playerSwords.get(playerId);
+                op.group.remove(oldSword);
+                playerSwords.delete(playerId);
+            }
+            
+            // Add new sword if swordType exists
+            if (swordType && BLOCK_TYPES[swordType] && BLOCK_TYPES[swordType].isWeapon) {
+                const sword = createSwordMesh(swordType, playerId);
+                if (sword) {
+                    sword.position.set(-0.3, 0.8, 0); // Position in hand
+                    sword.scale.set(0.3, 0.3, 1);
+                    op.group.add(sword);
+                    playerSwords.set(playerId, sword);
+                }
             }
         }
 
@@ -973,6 +1063,26 @@
             return document.getElementById('shop').style.display === 'block';
         }
 
+        // Block breaking cancellation
+        function isStillLookingAtBlock() {
+            if (!isBreaking || !breakingBlock) return false;
+            
+            raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+            const intersects = raycaster.intersectObjects(blocksInScene);
+            
+            if (intersects.length === 0) return false;
+            
+            const intersect = intersects[0];
+            
+            // Check if it's the same block
+            const sameBlock = intersect.object === breakingBlock;
+            
+            // Check distance
+            const inRange = intersect.distance <= 5;
+            
+            return sameBlock && inRange;
+        }
+
         document.addEventListener('keydown', (e) => {
             if (!isFullscreen()) return;
             
@@ -1088,9 +1198,12 @@
                     
                     if (playerIntersects.length > 0) {
                         const intersect = playerIntersects[0];
-                        if (intersect.distance > 5) return;
+                        if (intersect.distance > 5) {
+                            socket.emit('notification', 'Too far away!');
+                            return;
+                        }
                         
-                        // Find the player ID by traversing up the object hierarchy
+                        // Find the player ID
                         let obj = intersect.object;
                         while (obj && !otherPlayers.has(obj.name)) {
                             obj = obj.parent;
@@ -1106,8 +1219,14 @@
                 // If no player hit, check for blocks
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0) {
-                    const obj = blockIntersects[0].object;
-                    if (blockIntersects[0].distance > 5) return;
+                    const intersect = blockIntersects[0];
+                    const obj = intersect.object;
+                    
+                    if (intersect.distance > 5) {
+                        socket.emit('notification', 'Too far away!');
+                        return;
+                    }
+                    
                     if (obj.userData.type !== 'spawner') {
                         const type = obj.userData.type || 'Grass';
                         isBreaking = true;
@@ -1137,7 +1256,6 @@
                 
                 // Check if we have an enderpearl selected
                 if (currentSlot && currentSlot.type === 'Enderpearl' && currentSlot.count > 0) {
-                    // Throw enderpearl instead of placing blocks
                     socket.emit('throwEnderpearl');
                     return;
                 }
@@ -1146,7 +1264,10 @@
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0 && currentSlot && currentSlot.count > 0) {
                     const intersect = blockIntersects[0];
-                    if (intersect.distance > 5) return;
+                    if (intersect.distance > 5) {
+                        socket.emit('notification', 'Too far away!');
+                        return;
+                    }
                     const pos = intersect.point.clone().add(intersect.face.normal.multiplyScalar(0.5));
 
                     const currentEyeHeight = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
@@ -1226,6 +1347,7 @@
 
         let prevTime = performance.now();
         let lastGeneratorUpdate = 0;
+        let swordBobTime = 0;
 
         function animate() {
             requestAnimationFrame(animate);
@@ -1241,23 +1363,7 @@
             }
 
             if (isBreaking && breakingBlock && !isSpectator) {
-                const elapsed = Date.now() - breakingStartTime;
-                const progress = Math.min((elapsed / breakingDuration) * 100, 100);
-                document.getElementById('break-progress-bar').style.width = progress + '%';
-
-                if (breakingOverlay && breakingTextures.length > 0) {
-                    const textureIndex = Math.floor(progress / 10) - 1;
-                    if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
-                        breakingOverlay.material.map = breakingTextures[textureIndex];
-                        breakingOverlay.material.needsUpdate = true;
-                    }
-                }
-
-                if (elapsed >= breakingDuration) {
-                    const x = Math.floor(breakingBlock.position.x - 0.5);
-                    const y = Math.floor(breakingBlock.position.y - 0.5);
-                    const z = Math.floor(breakingBlock.position.z - 0.5);
-                    socket.emit('breakAttempt', { x, y, z });
+                if (!isStillLookingAtBlock()) {
                     isBreaking = false;
                     breakingBlock = null;
                     document.getElementById('break-progress').style.display = 'none';
@@ -1266,13 +1372,37 @@
                         scene.remove(breakingOverlay);
                         breakingOverlay = null;
                     }
+                } else {
+                    const elapsed = Date.now() - breakingStartTime;
+                    const progress = Math.min((elapsed / breakingDuration) * 100, 100);
+                    document.getElementById('break-progress-bar').style.width = progress + '%';
+
+                    if (breakingOverlay && breakingTextures.length > 0) {
+                        const textureIndex = Math.floor(progress / 10) - 1;
+                        if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
+                            breakingOverlay.material.map = breakingTextures[textureIndex];
+                            breakingOverlay.material.needsUpdate = true;
+                        }
+                    }
+
+                    if (elapsed >= breakingDuration) {
+                        const x = Math.floor(breakingBlock.position.x - 0.5);
+                        const y = Math.floor(breakingBlock.position.y - 0.5);
+                        const z = Math.floor(breakingBlock.position.z - 0.5);
+                        socket.emit('breakAttempt', { x, y, z });
+                        isBreaking = false;
+                        breakingBlock = null;
+                        document.getElementById('break-progress').style.display = 'none';
+                        document.getElementById('break-progress-bar').style.width = '0%';
+                        if (breakingOverlay) {
+                            scene.remove(breakingOverlay);
+                            breakingOverlay = null;
+                        }
+                    }
                 }
             }
 
             const now = Date.now();
-
-            // Enderpearls are updated by server events, no need for client-side updates
-            // They already face camera and scale based on distance in updateEnderpearl function
 
             resourceSpawners.forEach(spawner => {
                 const pulseSpeed = 2;
@@ -1294,6 +1424,23 @@
                     socket.emit('claimPickupAttempt', pickup.userData.id);
                     removePickupMesh(pickup.userData.id);
                 }
+            }
+
+            // Update sword in hand position (bobbing animation)
+            if (swordInHand) {
+                swordBobTime += delta;
+                const bobAmount = 0.05;
+                const bobSpeed = 5;
+                
+                const xPos = -0.3;
+                const yPos = -0.2;
+                const zPos = -0.5;
+                
+                const bobOffset = Math.sin(swordBobTime * bobSpeed) * bobAmount;
+                
+                swordInHand.position.set(xPos, yPos + bobOffset, zPos);
+                swordInHand.lookAt(camera.position);
+                swordInHand.rotation.z += Math.PI / 4; // Tilt for better visibility
             }
 
             if (controls.isLocked) {
@@ -1382,12 +1529,16 @@
             }
 
             if (controls.isLocked && socket.connected && time - lastPlayerUpdate > 50) {
+                const currentSlot = inventory[selectedSlotIndex];
+                const equippedWeapon = currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon ? currentSlot.type : null;
+                
                 socket.emit('playerUpdate', {
                     pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
                     rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
                     crouch: isCrouching,
                     selected: selectedSlotIndex,
-                    spectator: isSpectator
+                    spectator: isSpectator,
+                    equippedWeapon: equippedWeapon
                 });
                 lastPlayerUpdate = time;
             }
@@ -1456,12 +1607,14 @@
             
             selectedSlotIndex = index;
             updateUI();
+            updateSwordInHand();
+            
             const slot = inventory[selectedSlotIndex];
             const overlay = document.getElementById('item-name-overlay');
             if (slot) {
                 overlay.innerText = slot.type;
                 overlay.style.opacity = '1';
-                overlay.style.color = '#' + BLOCK_TYPES[slot.type].color.toString(16).padStart(6, '0');
+                overlay.style.color = '#' + (BLOCK_TYPES[slot.type]?.color?.toString(16).padStart(6, '0') || 'ffffff');
                 if (overlayTimeout) clearTimeout(overlayTimeout);
                 overlayTimeout = setTimeout(() => { overlay.style.opacity = '0'; }, 2000);
             } else {
@@ -1499,6 +1652,9 @@
                         else if (slot.type === 'Stone') icon.src = TEXTURE_URLS.stone;
                         else if (slot.type === 'Obsidian') icon.src = TEXTURE_URLS.obsidian;
                         else if (slot.type === 'Enderpearl') icon.src = TEXTURE_URLS.enderpearl;
+                        else if (slot.type === 'Wooden Sword') icon.src = TEXTURE_URLS.woodenSword;
+                        else if (slot.type === 'Iron Sword') icon.src = TEXTURE_URLS.ironSword;
+                        else if (slot.type === 'Emerald Sword') icon.src = TEXTURE_URLS.emeraldSword;
                         div.appendChild(icon);
                     } else {
                         const icon = document.createElement('div');
@@ -1533,7 +1689,7 @@
                 const affordable = canAfford(data.cost);
                 item.className = `shop-item ${affordable ? '' : 'disabled'}`;
                 
-                // Get the appropriate image URL for each block type
+                // Get the appropriate image URL for each item type
                 let imageUrl = '';
                 if (name === 'Grass') imageUrl = TEXTURE_URLS.grass;
                 else if (name === 'Wood') imageUrl = TEXTURE_URLS.wood;
@@ -1541,6 +1697,9 @@
                 else if (name === 'Obsidian') imageUrl = TEXTURE_URLS.obsidian;
                 else if (name === 'Glass') imageUrl = ''; // Glass doesn't have a specific texture
                 else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
+                else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
+                else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
+                else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
                 
                 const costText = Object.entries(data.cost)
                     .map(([res, amt]) => `${amt} ${res}`)
@@ -1552,6 +1711,7 @@
                     <strong>${name}</strong><br>
                     <span style="font-size:0.9em; color:#aaa;">${data.buyAmount}x</span><br>
                     <span style="color: ${affordable ? '#4d9043' : '#d32f2f'}">${costText}</span>
+                    ${data.isWeapon ? `<br><span style="color:#ff8888; font-size:0.8em;">Damage: ${data.damage}</span>` : ''}
                 `;
                 item.onclick = () => {
                     wasBuying = true;
@@ -1587,7 +1747,7 @@
             return color;
         }
 
-        function createOtherPlayer(id, health = 10) {
+        function createOtherPlayer(id, health = 10, equippedWeapon = null) {
             const group = new THREE.Group();
             group.name = id;
 
@@ -1662,6 +1822,11 @@
             // Store initial health
             playerHealth.set(id, health);
             
+            // Add sword if equipped
+            if (equippedWeapon) {
+                updateOtherPlayerSword(id, equippedWeapon);
+            }
+            
             return group;
         }
 
@@ -1671,7 +1836,6 @@
             const op = otherPlayers.get(id);
             if (!op || !op.group) return;
             
-            // Update the name tag texture
             const nameTag = op.group.children.find(child => child.name === 'nameTag');
             if (nameTag && nameTag.material.map) {
                 const canvas = nameTag.material.map.image;
@@ -1684,7 +1848,6 @@
                 ctx.textAlign = 'center';
                 ctx.fillText(id.substring(0, 6).toUpperCase(), 128, 25);
                 
-                // Change color based on health
                 let healthColor = '#4CAF50';
                 if (health <= 5) healthColor = '#FFA500';
                 if (health <= 2) healthColor = '#FF0000';
@@ -1703,6 +1866,9 @@
                 scene.remove(op.group);
                 otherPlayers.delete(id);
                 playerHealth.delete(id);
+                if (playerSwords.has(id)) {
+                    playerSwords.delete(id);
+                }
             }
         }
 
@@ -1736,9 +1902,9 @@
         });
 
         socket.on('playersSnapshot', (others) => {
-            others.forEach(({ id, pos, rot, crouch, spectator, health }) => {
+            others.forEach(({ id, pos, rot, crouch, spectator, health, equippedWeapon }) => {
                 if (spectator) return;
-                createOtherPlayer(id, health || 10);
+                createOtherPlayer(id, health || 10, equippedWeapon);
                 const op = otherPlayers.get(id);
                 op.targetPos = pos;
                 op.targetRot = rot;
@@ -1747,9 +1913,9 @@
             });
         });
 
-        socket.on('newPlayer', ({ id, pos, rot, crouch, spectator, health }) => {
+        socket.on('newPlayer', ({ id, pos, rot, crouch, spectator, health, equippedWeapon }) => {
             if (spectator) return;
-            createOtherPlayer(id, health || 10);
+            createOtherPlayer(id, health || 10, equippedWeapon);
             const op = otherPlayers.get(id);
             op.targetPos = pos;
             op.targetRot = rot;
@@ -1758,11 +1924,11 @@
         });
 
         socket.on('playersUpdate', (states) => {
-            states.forEach(({ id, pos, rot, crouch, spectator, health }) => {
+            states.forEach(({ id, pos, rot, crouch, spectator, health, equippedWeapon }) => {
                 if (id === playerId) return;
                 let op = otherPlayers.get(id);
                 if (!op && !spectator) {
-                    createOtherPlayer(id, health || 10);
+                    createOtherPlayer(id, health || 10, equippedWeapon);
                     op = otherPlayers.get(id);
                 }
                 if (op) {
@@ -1770,8 +1936,21 @@
                     op.targetRot = rot;
                     op.targetCrouch = crouch;
                     op.spectator = spectator;
+                    
+                    // Update sword if equipped weapon changed
+                    if (equippedWeapon !== op.equippedWeapon) {
+                        op.equippedWeapon = equippedWeapon;
+                        updateOtherPlayerSword(id, equippedWeapon);
+                    }
+                    
                     if (spectator) {
                         op.group.visible = false;
+                        // Remove sword if player becomes spectator
+                        if (playerSwords.has(id)) {
+                            const sword = playerSwords.get(id);
+                            op.group.remove(sword);
+                            playerSwords.delete(id);
+                        }
                     } else {
                         op.group.visible = true;
                     }
@@ -1800,6 +1979,7 @@
         socket.on('updateInventory', (inv) => {
             inventory = inv;
             updateUI();
+            updateSwordInHand();
             wasBuying = false;
         });
         
@@ -1872,6 +2052,7 @@
             inventory = data.inventory;
             currency = data.currency;
             updateUI();
+            updateSwordInHand();
         });
 
         socket.on('gameEnd', ({ winner }) => {
@@ -1923,6 +2104,13 @@
             });
             otherPlayers.clear();
             playerHealth.clear();
+            playerSwords.clear();
+            
+            // Clear sword in hand
+            if (swordInHand) {
+                scene.remove(swordInHand);
+                swordInHand = null;
+            }
             
             // Add new blocks
             data.blocks.forEach(({ x, y, z, type }) => {
@@ -1949,6 +2137,7 @@
             inventory = data.inventory;
             currency = data.currency;
             updateUI();
+            updateSwordInHand();
             velocity.set(0, 0, 0);
         });
 
