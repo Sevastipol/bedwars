@@ -812,25 +812,28 @@
 
         // --- Enderpearl Functions (Minecraft-style) ---
         function createEnderpearlMesh(data) {
-            if (!enderpearlTexture) return null;
+            // Create a simple sphere for the enderpearl
+            const geometry = new THREE.SphereGeometry(0.2, 8, 8);
             
-            const spriteMaterial = new THREE.SpriteMaterial({ 
-                map: enderpearlTexture,
+            // Use color as fallback, texture if available
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff88,
                 transparent: true,
-                opacity: 0.9,
-                sizeAttenuation: true
+                opacity: 0.9
             });
             
-            const pearl = new THREE.Sprite(spriteMaterial);
-            pearl.position.set(data.x, data.y, data.z);
+            // If texture is loaded, use it
+            if (enderpearlTexture) {
+                material.map = enderpearlTexture;
+                material.color = new THREE.Color(0xffffff);
+            }
             
-            const baseScale = 0.3;
-            pearl.scale.set(baseScale, baseScale, 1);
+            const pearl = new THREE.Mesh(geometry, material);
+            pearl.position.set(data.x, data.y, data.z);
             
             pearl.userData = { 
                 id: data.id, 
                 type: 'enderpearl',
-                baseScale: baseScale,
                 // Store interpolation data
                 targetX: data.x,
                 targetY: data.y,
@@ -1264,11 +1267,13 @@
                 
                 // Check if we have an enderpearl selected
                 if (currentSlot && currentSlot.type === 'Enderpearl' && currentSlot.count > 0) {
+                    // ALWAYS throw the enderpearl when right-clicking with it selected
+                    // This works regardless of what block/object we're looking at
                     socket.emit('throwEnderpearl');
                     return;
                 }
                 
-                // Regular block placement
+                // Regular block placement (only if not throwing enderpearl)
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0 && currentSlot && currentSlot.count > 0) {
                     const intersect = blockIntersects[0];
@@ -1395,14 +1400,12 @@
                     
                     pearl.position.set(newX, newY, newZ);
                     
-                    // Scale based on distance to camera
-                    const distance = camera.position.distanceTo(pearl.position);
-                    const baseScale = pearl.userData.baseScale || 0.3;
-                    const scale = baseScale * Math.max(0.5, Math.min(1.5, 10 / Math.max(1, distance)));
-                    pearl.scale.set(scale, scale, 1);
+                    // Add a subtle rotation to make it look alive
+                    pearl.rotation.x += 0.05;
+                    pearl.rotation.y += 0.03;
                     
-                    // Always face camera
-                    pearl.lookAt(camera.position);
+                    // Add a gentle floating motion
+                    pearl.position.y += Math.sin(time * 0.001) * 0.01;
                 }
             });
 
