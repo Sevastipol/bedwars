@@ -299,8 +299,8 @@ function eliminatePlayer(playerId, eliminatorId) {
         eliminatorId: eliminatorId
     });
     
-    // Remove player body for all other players
-    socket.broadcast.emit('removePlayer', playerId);
+    // Immediately remove player body for all clients
+    io.emit('removePlayer', playerId);
     
     // Check if game should end (only if there's 1 or fewer active players left)
     const activePlayers = getActivePlayers();
@@ -456,6 +456,122 @@ function startPlayerCheck() {
             }
         }
     }, 1000);
+}
+
+// COMPLETELY REFACTORED ENDERPEARL PHYSICS
+class Enderpearl {
+    constructor(id, owner, x, y, z, vx, vy, vz) {
+        this.id = id;
+        this.owner = owner;
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.vx = vx;
+        this.vy = vy;
+        this.vz = vz;
+        this.gravity = 0.03;
+        this.drag = 0.99;
+        this.radius = 0.25; // Sphere radius
+        this.lastUpdate = Date.now();
+        this.createdAt = Date.now();
+        this.landed = false;
+    }
+    
+    update(deltaTime) {
+        // Apply gravity
+        this.vy -= this.gravity;
+        
+        // Apply drag
+        this.vx *= this.drag;
+        this.vz *= this.drag;
+        
+        // Update position
+        const speedMultiplier = 20;
+        this.x += this.vx * deltaTime * speedMultiplier;
+        this.y += this.vy * deltaTime * speedMultiplier;
+        this.z += this.vz * deltaTime * speedMultiplier;
+    }
+    
+    // Check collision with blocks using sphere collision
+    checkCollision() {
+        // Check ground collision
+        if (this.y - this.radius <= 0.1) {
+            return { type: 'ground', x: this.x, y: 0.1 + this.radius, z: this.z };
+        }
+        
+        // Check block collision
+        // Check blocks in a 3x3x3 area around the pearl
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dz = -1; dz <= 1; dz++) {
+                    const checkX = Math.floor(this.x + dx);
+                    const checkY = Math.floor(this.y + dy);
+                    const checkZ = Math.floor(this.z + dz);
+                    
+                    if (blocks.has(blockKey(checkX, checkY, checkZ))) {
+                        // Block center position
+                        const blockCenterX = checkX + 0.5;
+                        const blockCenterY = checkY + 0.5;
+                        const blockCenterZ = checkZ + 0.5;
+                        
+                        // Check sphere-AABB collision
+                        const closestX = Math.max(checkX, Math.min(this.x, checkX + 1));
+                        const closestY = Math.max(checkY, Math.min(this.y, checkY + 1));
+                        const closestZ = Math.max(checkZ, Math.min(this.z, checkZ + 1));
+                        
+                        const distance = Math.sqrt(
+                            Math.pow(this.x - closestX, 2) +
+                            Math.pow(this.y - closestY, 2) +
+                            Math.pow(this.z - closestZ, 2)
+                        );
+                        
+                        if (distance < this.radius) {
+                            // Collision detected
+                            return { 
+                                type: 'block', 
+                                x: this.x, 
+                                y: this.y, 
+                                z: this.z,
+                                blockX: checkX,
+                                blockY: checkY,
+                                blockZ: checkZ
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        
+        return null;
+    }
+    
+    getSafeTeleportPosition(collision) {
+        let teleportX = this.x;
+        let teleportY = this.y + 1; // Default: 1 block above collision
+        let teleportZ = this.z;
+        
+        if (collision.type === 'ground') {
+            // On ground, stand on top
+            teleportY = Math.max(0.1, collision.y) + 1.6; // Eye height
+        } else if (collision.type === 'block') {
+            // Find safe position above the block
+            teleportY = collision.blockY + 2; // Stand on top of the block + eye height
+            
+            // Try to find a safe Y position by checking upwards
+            let safeY = collision.blockY + 2;
+            for (let i = 0; i < 10; i++) {
+                const checkY = Math.floor(safeY);
+                if (!blocks.has(blockKey(Math.floor(teleportX), checkY, Math.floor(teleportZ))) &&
+                    !blocks.has(blockKey(Math.floor(teleportX), checkY - 1, Math.floor(teleportZ)))) {
+                    teleportY = safeY;
+                    break;
+                }
+                safeY += 1;
+            }
+        }
+        
+        return { x: teleportX, y: teleportY, z: teleportZ };
+    }
 }
 
 // Socket connections
@@ -804,7 +920,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Enderpearl throwing (Minecraft-style) - FIXED VERSION
+    // REFACTORED ENDERPEARL THROWING - Physics-based ball
     socket.on('throwEnderpearl', () => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -823,7 +939,7 @@ io.on('connection', (socket) => {
         
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
-        // Minecraft-like throw physics
+        // Calculate throw direction based on player's look direction
         const throwPower = 1.5;
         const velocity = {
             x: -Math.sin(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower,
@@ -832,24 +948,16 @@ io.on('connection', (socket) => {
         };
         
         const pearlId = `pearl-${socket.id}-${Date.now()}`;
-        const pearl = {
-            id: pearlId,
-            owner: socket.id,
-            x: p.pos.x,
-            y: p.pos.y + (p.crouch ? 1.3 : 1.6), // Start at eye level
-            z: p.pos.z,
-            vx: velocity.x,
-            vy: velocity.y,
-            vz: velocity.z,
-            gravity: 0.03,
-            drag: 0.99,
-            lastUpdate: Date.now(),
-            createdAt: Date.now(),
-            landed: false,
-            // Minecraft-like properties
-            boundingBox: { width: 0.25, height: 0.25, depth: 0.25 }, // Small hitbox like Minecraft
-            noClip: true // Can pass through blocks initially like in Minecraft
-        };
+        const pearl = new Enderpearl(
+            pearlId,
+            socket.id,
+            p.pos.x,
+            p.pos.y + (p.crouch ? 1.3 : 1.6), // Eye height
+            p.pos.z,
+            velocity.x,
+            velocity.y,
+            velocity.z
+        );
         
         enderpearls.set(pearlId, pearl);
         
@@ -857,7 +965,8 @@ io.on('connection', (socket) => {
             id: pearl.id,
             x: pearl.x,
             y: pearl.y,
-            z: pearl.z
+            z: pearl.z,
+            radius: pearl.radius
         });
     });
 
@@ -886,7 +995,7 @@ io.on('connection', (socket) => {
                     }
                 }
                 
-                // IMPORTANT: Broadcast removal of player body
+                // IMPORTANT: Immediately broadcast removal of player body
                 io.emit('removePlayer', socket.id);
                 
                 players.delete(socket.id);
@@ -954,7 +1063,7 @@ setInterval(() => {
             suddenDeath = true;
         }
 
-        // Update enderpearls with Minecraft physics - FIXED VERSION
+        // Update enderpearls with new physics system
         const pearlUpdates = [];
         enderpearls.forEach((pearl, id) => {
             if (pearl.landed) return;
@@ -964,38 +1073,13 @@ setInterval(() => {
             
             pearl.lastUpdate = now;
             
-            // Apply gravity
-            pearl.vy -= pearl.gravity;
+            // Update pearl position
+            pearl.update(deltaTime);
             
-            // Apply velocity with air resistance
-            pearl.vx *= pearl.drag;
-            pearl.vy *= pearl.drag;
-            pearl.vz *= pearl.drag;
+            // Check for collision
+            const collision = pearl.checkCollision();
             
-            const speedMultiplier = 20;
-            pearl.x += pearl.vx * deltaTime * speedMultiplier;
-            pearl.y += pearl.vy * deltaTime * speedMultiplier;
-            pearl.z += pearl.vz * deltaTime * speedMultiplier;
-            
-            // Check for collision with blocks or ground
-            const checkX = Math.floor(pearl.x);
-            const checkY = Math.floor(pearl.y);
-            const checkZ = Math.floor(pearl.z);
-            
-            // Check if pearl has hit ground or block
-            let collided = false;
-            
-            // Check ground collision
-            if (pearl.y <= 0.1) {
-                collided = true;
-            }
-            
-            // Check block collision
-            if (blocks.has(blockKey(checkX, checkY, checkZ))) {
-                collided = true;
-            }
-            
-            if (collided) {
+            if (collision) {
                 pearl.landed = true;
                 
                 // Teleport player with damage (Minecraft: 5 damage = 2.5 hearts)
@@ -1004,44 +1088,13 @@ setInterval(() => {
                     // Apply ender pearl damage (5 damage = 2.5 hearts)
                     player.health -= 5;
                     
-                    // Teleport player to pearl location
-                    let teleportX = pearl.x;
-                    let teleportY = pearl.y + 1; // Start one block above the pearl
-                    let teleportZ = pearl.z;
-                    
-                    // Find safe position (not inside blocks)
-                    let attempts = 0;
-                    let foundSafeSpot = false;
-                    
-                    // Check upwards for safe position
-                    while (attempts < 10 && !foundSafeSpot) {
-                        // Check if the position is inside a block
-                        const checkBlockX = Math.floor(teleportX);
-                        const checkBlockY = Math.floor(teleportY);
-                        const checkBlockZ = Math.floor(teleportZ);
-                        
-                        const isInsideBlock = blocks.has(blockKey(checkBlockX, checkBlockY, checkBlockZ)) ||
-                                             blocks.has(blockKey(checkBlockX, checkBlockY + 1, checkBlockZ));
-                        
-                        if (!isInsideBlock) {
-                            foundSafeSpot = true;
-                            break;
-                        }
-                        
-                        // Move up one block
-                        teleportY += 1;
-                        attempts++;
-                    }
-                    
-                    // If no safe spot found, use original position
-                    if (!foundSafeSpot) {
-                        teleportY = pearl.y + 2; // Default to 2 blocks above
-                    }
+                    // Get safe teleport position
+                    const safePos = pearl.getSafeTeleportPosition(collision);
                     
                     // Update player position
-                    player.pos.x = teleportX;
-                    player.pos.y = teleportY;
-                    player.pos.z = teleportZ;
+                    player.pos.x = safePos.x;
+                    player.pos.y = safePos.y;
+                    player.pos.z = safePos.z;
                     
                     io.to(pearl.owner).emit('teleport', {
                         x: player.pos.x,
