@@ -427,7 +427,7 @@
         let roundTimeRemaining = 900;
         let roundTimerInterval = null;
         let isInRound = false;
-        let wasBuying = false; // Flag for buy
+        let wasBuying = false;
 
         // --- Config ---
         const BLOCK_TYPES = {
@@ -454,7 +454,7 @@
         const blocksInScene = [];
         const resourceSpawners = [];
         const resourcePickups = [];
-        const projectiles = new Map(); // For Enderpearl projectiles
+        const enderpearls = new Map(); // For Enderpearl physics balls
 
         // Breaking state
         let isBreaking = false;
@@ -473,8 +473,8 @@
         let blocksMeshes = new Map();
         let pickupMeshes = new Map();
         let otherPlayers = new Map();
-        let playerHealth = new Map(); // Store player health locally
-        let playerSwords = new Map(); // Store sword meshes for other players
+        let playerHealth = new Map();
+        let playerSwords = new Map();
 
         // --- Fullscreen Functions ---
         function enterFullscreen() {
@@ -642,7 +642,6 @@
         let ironTexture = null;
         let goldTexture = null;
         let emeraldTexture = null;
-        let enderpearlTexture = null;
         let woodenSwordTexture = null;
         let ironSwordTexture = null;
         let emeraldSwordTexture = null;
@@ -657,44 +656,12 @@
             iron: 'https://i.ibb.co/n87Ym7RY/pixilart-drawing-7.png',
             gold: 'https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png',
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png',
-            enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png',
             woodenSword: 'https://i.ibb.co/mLZmwsJ/pixil-frame-0-10.png',
             ironSword: 'https://i.ibb.co/F4NZLPzj/pixil-frame-0-11.png',
             emeraldSword: 'https://i.ibb.co/przKkdMP/pixil-frame-0-12.png'
         };
 
-        // Preload enderpearl texture to ensure it's always visible
-        const preloadEnderpearlTexture = () => {
-            return new Promise((resolve) => {
-                textureLoader.load(TEXTURE_URLS.enderpearl, (texture) => {
-                    texture.magFilter = THREE.NearestFilter;
-                    texture.minFilter = THREE.NearestFilter;
-                    enderpearlTexture = texture;
-                    console.log('Enderpearl texture loaded');
-                    resolve();
-                }, undefined, (error) => {
-                    console.error('Error loading enderpearl texture:', error);
-                    // Create a fallback texture
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 64;
-                    canvas.height = 64;
-                    const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#00ff88';
-                    ctx.fillRect(0, 0, 64, 64);
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = 'bold 20px Arial';
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('EP', 32, 32);
-                    enderpearlTexture = new THREE.CanvasTexture(canvas);
-                    enderpearlTexture.magFilter = THREE.NearestFilter;
-                    enderpearlTexture.minFilter = THREE.NearestFilter;
-                    resolve();
-                });
-            });
-        };
-
-        // Load other textures
+        // Load textures
         textureLoader.load(TEXTURE_URLS.grass, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -792,9 +759,6 @@
         };
         loadBreakingTextures();
 
-        // Preload enderpearl texture
-        preloadEnderpearlTexture();
-
         // --- World Generation ---
         function addBlockMesh(x, y, z, type) {
             const blockData = BLOCK_TYPES[type];
@@ -831,66 +795,70 @@
             }
         }
 
-        // --- Enderpearl Functions (Minecraft-style) - FIXED VERSION ---
+        // --- REFACTORED ENDERPEARL FUNCTIONS (Physics ball) ---
         function createEnderpearlMesh(data) {
-            // Create material - always visible even if texture isn't loaded yet
-            let material;
-            if (enderpearlTexture) {
-                material = new THREE.SpriteMaterial({ 
-                    map: enderpearlTexture,
-                    transparent: true,
-                    opacity: 0.9,
-                    sizeAttenuation: true
-                });
-            } else {
-                // Fallback material if texture isn't loaded yet
-                material = new THREE.SpriteMaterial({ 
-                    color: 0x00ff88,
-                    transparent: true,
-                    opacity: 0.9,
-                    sizeAttenuation: true
-                });
-            }
+            const radius = data.radius || 0.25;
+            const geometry = new THREE.SphereGeometry(radius, 16, 16);
             
-            const pearl = new THREE.Sprite(material);
+            // Create a material with green color and some transparency
+            const material = new THREE.MeshPhongMaterial({
+                color: 0x00ff88,
+                emissive: 0x004422,
+                emissiveIntensity: 0.3,
+                transparent: true,
+                opacity: 0.9,
+                shininess: 30
+            });
+            
+            const pearl = new THREE.Mesh(geometry, material);
             pearl.position.set(data.x, data.y, data.z);
             
-            const baseScale = 0.3;
-            pearl.scale.set(baseScale, baseScale, 1);
+            // Add a subtle glow effect
+            const glowGeometry = new THREE.SphereGeometry(radius * 1.2, 16, 16);
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ff88,
+                transparent: true,
+                opacity: 0.2,
+                side: THREE.BackSide
+            });
+            const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+            pearl.add(glow);
             
             pearl.userData = { 
                 id: data.id, 
                 type: 'enderpearl',
-                baseScale: baseScale
+                radius: radius,
+                glow: glow
             };
-            scene.add(pearl);
             
-            projectiles.set(data.id, pearl);
+            scene.add(pearl);
+            enderpearls.set(data.id, pearl);
             
             return pearl;
         }
 
         function updateEnderpearl(id, position) {
-            const pearl = projectiles.get(id);
+            const pearl = enderpearls.get(id);
             if (pearl) {
                 pearl.position.set(position.x, position.y, position.z);
-                pearl.lookAt(camera.position);
                 
-                const distance = camera.position.distanceTo(pearl.position);
-                const baseScale = pearl.userData.baseScale || 0.3;
-                const constant = 5;
-                let scale = baseScale * (constant / Math.max(1, distance));
-                scale = Math.max(0.1, Math.min(scale, 1.0));
+                // Rotate the pearl for visual effect
+                pearl.rotation.x += 0.1;
+                pearl.rotation.y += 0.1;
                 
-                pearl.scale.set(scale, scale, 1);
+                // Make glow pulse
+                if (pearl.userData.glow) {
+                    const pulse = Math.sin(Date.now() * 0.005) * 0.1 + 0.2;
+                    pearl.userData.glow.material.opacity = 0.2 + pulse;
+                }
             }
         }
 
         function removeEnderpearlMesh(id) {
-            const pearl = projectiles.get(id);
+            const pearl = enderpearls.get(id);
             if (pearl) {
                 scene.remove(pearl);
-                projectiles.delete(id);
+                enderpearls.delete(id);
             }
         }
 
@@ -1704,7 +1672,21 @@
                         else if (slot.type === 'Wood') icon.src = TEXTURE_URLS.wood;
                         else if (slot.type === 'Stone') icon.src = TEXTURE_URLS.stone;
                         else if (slot.type === 'Obsidian') icon.src = TEXTURE_URLS.obsidian;
-                        else if (slot.type === 'Enderpearl') icon.src = TEXTURE_URLS.enderpearl;
+                        else if (slot.type === 'Enderpearl') {
+                            // Create a green circle for enderpearl
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 20;
+                            canvas.height = 20;
+                            const ctx = canvas.getContext('2d');
+                            ctx.fillStyle = '#00ff88';
+                            ctx.beginPath();
+                            ctx.arc(10, 10, 8, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.strokeStyle = '#ffffff';
+                            ctx.lineWidth = 2;
+                            ctx.stroke();
+                            icon.src = canvas.toDataURL();
+                        }
                         else if (slot.type === 'Wooden Sword') icon.src = TEXTURE_URLS.woodenSword;
                         else if (slot.type === 'Iron Sword') icon.src = TEXTURE_URLS.ironSword;
                         else if (slot.type === 'Emerald Sword') icon.src = TEXTURE_URLS.emeraldSword;
@@ -1749,7 +1731,26 @@
                 else if (name === 'Stone') imageUrl = TEXTURE_URLS.stone;
                 else if (name === 'Obsidian') imageUrl = TEXTURE_URLS.obsidian;
                 else if (name === 'Glass') imageUrl = ''; // Glass doesn't have a specific texture
-                else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
+                else if (name === 'Enderpearl') {
+                    // Create a green circle for enderpearl in shop
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 48;
+                    canvas.height = 48;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#00ff88';
+                    ctx.beginPath();
+                    ctx.arc(24, 24, 20, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 16px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('EP', 24, 24);
+                    imageUrl = canvas.toDataURL();
+                }
                 else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
                 else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
                 else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
@@ -2045,9 +2046,9 @@
             wasBuying = false;
         });
 
-        // Enderpearl events - FIXED
+        // REFACTORED ENDERPEARL EVENTS
         socket.on('addEnderpearl', (data) => {
-            console.log('Adding enderpearl:', data.id);
+            console.log('Adding physics enderpearl ball:', data.id);
             createEnderpearlMesh(data);
         });
 
@@ -2065,6 +2066,7 @@
         });
 
         socket.on('removePlayer', (id) => {
+            console.log('Removing player body:', id);
             removeOtherPlayer(id);
         });
 
@@ -2151,10 +2153,10 @@
             resourceSpawners.length = 0;
             
             // Clear enderpearls
-            projectiles.forEach((pearl, id) => {
+            enderpearls.forEach((pearl, id) => {
                 removeEnderpearlMesh(id);
             });
-            projectiles.clear();
+            enderpearls.clear();
             
             // Clear other players
             otherPlayers.forEach((op, id) => {
