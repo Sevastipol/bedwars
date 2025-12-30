@@ -291,7 +291,6 @@
             display: none;
             z-index: 20;
             pointer-events: none;
-            transition: opacity 0.5s ease;
         }
         
         #fullscreen-overlay {
@@ -429,6 +428,7 @@
         let roundTimerInterval = null;
         let isInRound = false;
         let wasBuying = false; // Flag for buy
+        let lastEnderpearlThrow = 0; // Client-side cooldown tracker
 
         // --- Config ---
         const BLOCK_TYPES = {
@@ -598,7 +598,7 @@
                     document.getElementById('timer').style.display = 'block';
                 }
                 
-                // Update sword in hand (will be hidden for local player)
+                // Update sword in hand
                 updateSwordInHand();
                 
                 if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
@@ -617,14 +617,8 @@
             if (playersNeeded > 0) {
                 messageElement.textContent = `Waiting for ${playersNeeded} more player${playersNeeded > 1 ? 's' : ''}...`;
                 messageElement.style.display = 'block';
-                messageElement.style.opacity = '1';
             } else {
-                messageElement.style.opacity = '0';
-                setTimeout(() => {
-                    if (parseFloat(messageElement.style.opacity) === 0) {
-                        messageElement.style.display = 'none';
-                    }
-                }, 500);
+                messageElement.style.display = 'none';
             }
         }
 
@@ -670,7 +664,38 @@
             emeraldSword: 'https://i.ibb.co/przKkdMP/pixil-frame-0-12.png'
         };
 
-        // Load textures
+        // Preload enderpearl texture to ensure it's always visible
+        const preloadEnderpearlTexture = () => {
+            return new Promise((resolve) => {
+                textureLoader.load(TEXTURE_URLS.enderpearl, (texture) => {
+                    texture.magFilter = THREE.NearestFilter;
+                    texture.minFilter = THREE.NearestFilter;
+                    enderpearlTexture = texture;
+                    console.log('Enderpearl texture loaded');
+                    resolve();
+                }, undefined, (error) => {
+                    console.error('Error loading enderpearl texture:', error);
+                    // Create a fallback texture
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 64;
+                    canvas.height = 64;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#00ff88';
+                    ctx.fillRect(0, 0, 64, 64);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('EP', 32, 32);
+                    enderpearlTexture = new THREE.CanvasTexture(canvas);
+                    enderpearlTexture.magFilter = THREE.NearestFilter;
+                    enderpearlTexture.minFilter = THREE.NearestFilter;
+                    resolve();
+                });
+            });
+        };
+
+        // Load other textures
         textureLoader.load(TEXTURE_URLS.grass, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -721,12 +746,6 @@
             emeraldTexture = texture;
         });
 
-        textureLoader.load(TEXTURE_URLS.enderpearl, (texture) => {
-            texture.magFilter = THREE.NearestFilter;
-            texture.minFilter = THREE.NearestFilter;
-            enderpearlTexture = texture;
-        });
-
         textureLoader.load(TEXTURE_URLS.woodenSword, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -774,6 +793,9 @@
         };
         loadBreakingTextures();
 
+        // Preload enderpearl texture
+        preloadEnderpearlTexture();
+
         // --- World Generation ---
         function addBlockMesh(x, y, z, type) {
             const blockData = BLOCK_TYPES[type];
@@ -810,108 +832,44 @@
             }
         }
 
-        // --- Minecraft-style Enderpearl Functions ---
+        // --- SIMPLE Enderpearl Functions (FIXED VERSION) ---
         function createEnderpearlMesh(data) {
-            // Create a Minecraft-style enderpearl (small purple sphere with custom texture)
-            const geometry = new THREE.SphereGeometry(0.15, 8, 8);
-            
-            let material;
-            if (enderpearlTexture) {
-                material = new THREE.MeshBasicMaterial({ 
-                    map: enderpearlTexture,
-                    transparent: true,
-                    opacity: 0.9
-                });
-            } else {
-                // Fallback: Purple color with green tint like Minecraft
-                material = new THREE.MeshBasicMaterial({ 
-                    color: 0x4a148c,
-                    transparent: true,
-                    opacity: 0.9
-                });
-            }
+            // Create a simple green sphere for enderpearl
+            const geometry = new THREE.SphereGeometry(0.2, 8, 8);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff88,
+                transparent: true,
+                opacity: 0.9
+            });
             
             const pearl = new THREE.Mesh(geometry, material);
-            
-            // Position the pearl
             pearl.position.set(data.x, data.y, data.z);
-            
-            // Add a glowing effect
-            const glowGeometry = new THREE.SphereGeometry(0.18, 8, 8);
-            const glowMaterial = new THREE.MeshBasicMaterial({
-                color: 0xba55d3,
-                transparent: true,
-                opacity: 0.3,
-                side: THREE.BackSide
-            });
-            const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-            glow.position.copy(pearl.position);
-            pearl.add(glow);
-            
-            // Store interpolation data and physics properties
             pearl.userData = { 
                 id: data.id, 
                 type: 'enderpearl',
-                vx: data.vx || 0,
-                vy: data.vy || 0,
-                vz: data.vz || 0,
-                gravity: 0.03,
-                drag: 0.99,
-                targetX: data.x,
-                targetY: data.y,
-                targetZ: data.z,
-                prevX: data.x,
-                prevY: data.y,
-                prevZ: data.z,
-                updateTime: Date.now(),
-                glow: glow,
-                // Add rotation for visual effect
-                rotationSpeed: { x: 0.05, y: 0.03, z: 0.02 }
+                startTime: Date.now(),
+                startPos: { x: data.x, y: data.y, z: data.z },
+                targetPos: data.targetPos,
+                duration: data.duration || 1000
             };
-            
             scene.add(pearl);
             projectiles.set(data.id, pearl);
-            
             return pearl;
         }
 
-        function updateEnderpearl(id, position, velocity) {
+        function updateEnderpearl(id, position) {
             const pearl = projectiles.get(id);
             if (pearl) {
-                // Store target position for interpolation
-                pearl.userData.targetX = position.x;
-                pearl.userData.targetY = position.y;
-                pearl.userData.targetZ = position.z;
-                
-                // Update velocity if provided
-                if (velocity) {
-                    pearl.userData.vx = velocity.x;
-                    pearl.userData.vy = velocity.y;
-                    pearl.userData.vz = velocity.z;
-                }
-                
-                pearl.userData.updateTime = Date.now();
+                pearl.position.set(position.x, position.y, position.z);
             }
         }
 
         function removeEnderpearlMesh(id) {
             const pearl = projectiles.get(id);
             if (pearl) {
-                // Clean up glow mesh
-                if (pearl.userData.glow) {
-                    pearl.remove(pearl.userData.glow);
-                }
-                
                 scene.remove(pearl);
-                
-                // Dispose of materials and geometries to prevent memory leaks
-                if (pearl.material) {
-                    pearl.material.dispose();
-                }
-                if (pearl.geometry) {
-                    pearl.geometry.dispose();
-                }
-                
+                if (pearl.geometry) pearl.geometry.dispose();
+                if (pearl.material) pearl.material.dispose();
                 projectiles.delete(id);
             }
         }
@@ -941,14 +899,23 @@
         }
 
         function updateSwordInHand() {
-            // Remove existing sword from local view - local player doesn't see their own sword
+            // Remove existing sword
             if (swordInHand) {
                 scene.remove(swordInHand);
                 swordInHand = null;
             }
             
-            // DO NOT create sword for local player - others will see it via server updates
-            // The server will broadcast equippedWeapon to other clients
+            // Check if current slot has a sword
+            const currentSlot = inventory[selectedSlotIndex];
+            if (currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon) {
+                swordInHand = createSwordMesh(currentSlot.type);
+                if (swordInHand) {
+                    // Position sword in view (lower right corner, like Minecraft)
+                    swordInHand.position.set(-0.4, -0.3, -0.5);
+                    swordInHand.scale.set(0.6, 0.6, 1);
+                    scene.add(swordInHand);
+                }
+            }
         }
 
         function updateOtherPlayerSword(playerId, swordType) {
@@ -967,11 +934,8 @@
                 const sword = createSwordMesh(swordType, playerId);
                 if (sword) {
                     // Position in right hand (outside the body)
-                    sword.position.set(-0.4, 0.8, 0); // Adjusted position
+                    sword.position.set(-0.7, 0.8, 0.2); // Position in right hand
                     sword.scale.set(0.4, 0.4, 1);
-                    
-                    // Make sword face camera (billboard effect for visibility)
-                    sword.userData.isSword = true;
                     
                     op.group.add(sword);
                     playerSwords.set(playerId, sword);
@@ -1314,13 +1278,39 @@
                 
                 // Check if we have an enderpearl selected
                 if (currentSlot && currentSlot.type === 'Enderpearl' && currentSlot.count > 0) {
-                    // ALWAYS throw the enderpearl when right-clicking with it selected
-                    // This works regardless of what block/object we're looking at
-                    socket.emit('throwEnderpearl');
+                    // Check client-side cooldown (0.1 seconds = 100ms)
+                    const now = Date.now();
+                    if (now - lastEnderpearlThrow < 100) {
+                        socket.emit('notification', 'Enderpearl cooldown!');
+                        return;
+                    }
+                    
+                    // Calculate target position (8 blocks away in the direction we're looking)
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    direction.applyQuaternion(camera.quaternion);
+                    direction.normalize();
+                    
+                    // Check for block intersection to determine target
+                    const intersects = raycaster.intersectObjects(blocksInScene);
+                    let targetDistance = 8; // Default 8 blocks away
+                    
+                    if (intersects.length > 0 && intersects[0].distance < 8) {
+                        targetDistance = intersects[0].distance - 0.5; // Stop before the block
+                    }
+                    
+                    const targetPos = {
+                        x: camera.position.x + direction.x * targetDistance,
+                        y: camera.position.y + direction.y * targetDistance,
+                        z: camera.position.z + direction.z * targetDistance
+                    };
+                    
+                    // Send throw event with target position
+                    socket.emit('throwEnderpearl', targetPos);
+                    lastEnderpearlThrow = now;
                     return;
                 }
                 
-                // Regular block placement (only if not throwing enderpearl)
+                // Regular block placement
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0 && currentSlot && currentSlot.count > 0) {
                     const intersect = blockIntersects[0];
@@ -1422,48 +1412,6 @@
                 lastGeneratorUpdate = time;
             }
 
-            // Update enderpearl physics
-            projectiles.forEach((pearl, id) => {
-                if (pearl.userData.type === 'enderpearl') {
-                    // Apply physics locally for smoother movement
-                    const delta = Math.min((time - prevTime) / 1000, 0.05);
-                    
-                    // Apply gravity
-                    pearl.userData.vy -= pearl.userData.gravity * delta * 20;
-                    
-                    // Apply drag
-                    pearl.userData.vx *= Math.pow(pearl.userData.drag, delta);
-                    pearl.userData.vz *= Math.pow(pearl.userData.drag, delta);
-                    
-                    // Update position based on velocity
-                    pearl.position.x += pearl.userData.vx * delta * 20;
-                    pearl.position.y += pearl.userData.vy * delta * 20;
-                    pearl.position.z += pearl.userData.vz * delta * 20;
-                    
-                    // Rotate the enderpearl
-                    pearl.rotation.x += pearl.userData.rotationSpeed.x;
-                    pearl.rotation.y += pearl.userData.rotationSpeed.y;
-                    pearl.rotation.z += pearl.userData.rotationSpeed.z;
-                    
-                    // Make the glow pulse
-                    if (pearl.userData.glow) {
-                        const pulse = 0.18 + Math.sin(time * 0.005) * 0.02;
-                        pearl.userData.glow.scale.set(pulse, pulse, pulse);
-                    }
-                    
-                    // Check for collision with blocks (client-side prediction)
-                    const checkX = Math.floor(pearl.position.x);
-                    const checkY = Math.floor(pearl.position.y);
-                    const checkZ = Math.floor(pearl.position.z);
-                    const blockKey = `${checkX},${checkY},${checkZ}`;
-                    
-                    if (pearl.position.y <= 0.1 || blocksMeshes.has(blockKey)) {
-                        // Remove enderpearl locally (server will confirm)
-                        removeEnderpearlMesh(id);
-                    }
-                }
-            });
-
             if (isBreaking && breakingBlock && !isSpectator) {
                 if (!isStillLookingAtBlock()) {
                     isBreaking = false;
@@ -1471,7 +1419,7 @@
                     document.getElementById('break-progress').style.display = 'none';
                     document.getElementById('break-progress-bar').style.width = '0%';
                     if (breakingOverlay) {
-                        scene.remove(breakingOverlay);
+                        scene.remove(breakingOverarlay);
                         breakingOverlay = null;
                     }
                 } else {
@@ -1526,6 +1474,45 @@
                     socket.emit('claimPickupAttempt', pickup.userData.id);
                     removePickupMesh(pickup.userData.id);
                 }
+            }
+
+            // Update enderpearl animations
+            projectiles.forEach((pearl, id) => {
+                if (pearl.userData.startTime && pearl.userData.duration) {
+                    const elapsed = now - pearl.userData.startTime;
+                    const progress = Math.min(elapsed / pearl.userData.duration, 1);
+                    
+                    if (progress < 1) {
+                        // Linear interpolation between start and target
+                        const start = pearl.userData.startPos;
+                        const target = pearl.userData.targetPos;
+                        pearl.position.x = start.x + (target.x - start.x) * progress;
+                        pearl.position.y = start.y + (target.y - start.y) * progress;
+                        pearl.position.z = start.z + (target.z - start.z) * progress;
+                        
+                        // Add a slight bobbing effect
+                        pearl.position.y += Math.sin(now / 100) * 0.05;
+                    }
+                }
+            });
+
+            // Update sword in hand position (bobbing animation)
+            if (swordInHand) {
+                swordBobTime += delta;
+                const bobAmount = 0.02;
+                const bobSpeed = 5;
+                
+                const bobOffset = Math.sin(swordBobTime * bobSpeed) * bobAmount;
+                
+                // Position in lower right corner with bobbing
+                swordInHand.position.set(-0.4, -0.3 + bobOffset, -0.5);
+                
+                // Make sword face camera (billboard effect)
+                swordInHand.lookAt(camera.position);
+                
+                // Add slight rotation to make it look more natural
+                swordInHand.rotation.x = -0.2; // Tilt forward slightly
+                swordInHand.rotation.z = Math.PI / 6; // Rotate 30 degrees for better visibility
             }
 
             if (controls.isLocked) {
@@ -1651,7 +1638,7 @@
                     data.healthBar.style.backgroundColor = health > 5 ? '#4CAF50' : health > 2 ? '#FFA500' : '#FF0000';
                 }
                 
-                // Update sword for other players - make it face camera
+                // Update sword for other players
                 if (playerSwords.has(id)) {
                     const sword = playerSwords.get(id);
                     // Make sword look at camera (billboard effect)
@@ -2086,20 +2073,22 @@
             wasBuying = false;
         });
 
-        // Enderpearl events
+        // SIMPLE Enderpearl events - NEW VERSION
         socket.on('addEnderpearl', (data) => {
+            console.log('Adding enderpearl:', data.id);
             createEnderpearlMesh(data);
         });
 
         socket.on('updateEnderpearl', (data) => {
             if (Array.isArray(data)) {
-                data.forEach(pearl => updateEnderpearl(pearl.id, pearl, {x: pearl.vx, y: pearl.vy, z: pearl.vz}));
+                data.forEach(pearl => updateEnderpearl(pearl.id, pearl));
             } else {
-                updateEnderpearl(data.id, data, {x: data.vx, y: data.vy, z: data.vz});
+                updateEnderpearl(data.id, data);
             }
         });
 
         socket.on('removeEnderpearl', (id) => {
+            console.log('Removing enderpearl:', id);
             removeEnderpearlMesh(id);
         });
 
@@ -2128,34 +2117,14 @@
         });
 
         socket.on('countdown', (sec) => {
-            const waitingMessage = document.getElementById('waiting-message');
-            if (sec > 0) {
-                waitingMessage.textContent = `Starting in ${sec}...`;
-                waitingMessage.style.display = 'block';
-                waitingMessage.style.opacity = '1';
-            } else {
-                waitingMessage.style.opacity = '0';
-                setTimeout(() => {
-                    if (parseFloat(waitingMessage.style.opacity) === 0) {
-                        waitingMessage.style.display = 'none';
-                    }
-                }, 500);
-            }
+            showNotification(`Starting in ${sec}`, 1100);
+            updateWaitingMessage(0);
         });
 
         socket.on('gameStart', () => {
             showNotification('GO!');
             isInRound = true;
             startRoundTimer(900);
-            
-            // Hide waiting message with fade out
-            const waitingMessage = document.getElementById('waiting-message');
-            waitingMessage.style.opacity = '0';
-            setTimeout(() => {
-                if (parseFloat(waitingMessage.style.opacity) === 0) {
-                    waitingMessage.style.display = 'none';
-                }
-            }, 500);
         });
 
         socket.on('assignBed', (data) => {
