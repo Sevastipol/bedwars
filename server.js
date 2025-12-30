@@ -33,6 +33,10 @@ const ROUND_DURATION = 15 * 60 * 1000;
 const REQUIRED_PLAYERS = 2;
 const PLAYER_MAX_HEALTH = 10;
 
+// Physics constants
+const EYE_HEIGHT = 1.6;
+const CROUCH_HEIGHT = 1.3;
+
 // State
 const blocks = new Map();
 const pickups = new Map();
@@ -597,7 +601,7 @@ io.on('connection', (socket) => {
             }
             
             // Check distance for bed breaking (same as other blocks)
-            const eyeHeight = p.crouch ? 1.3 : 1.6;
+            const eyeHeight = p.crouch ? CROUCH_HEIGHT : EYE_HEIGHT;
             const playerEyeY = p.pos.y - eyeHeight;
             const blockCenterY = y + 0.5;
             
@@ -617,7 +621,7 @@ io.on('connection', (socket) => {
             return;
         }
         
-        const eyeHeight = p.crouch ? 1.3 : 1.6;
+        const eyeHeight = p.crouch ? CROUCH_HEIGHT : EYE_HEIGHT;
         const playerEyeY = p.pos.y - eyeHeight;
         const blockCenterY = y + 0.5;
         
@@ -657,7 +661,7 @@ io.on('connection', (socket) => {
             return;
         }
         
-        const eyeHeight = p.crouch ? 1.3 : 1.6;
+        const eyeHeight = p.crouch ? CROUCH_HEIGHT : EYE_HEIGHT;
         const playerEyeY = p.pos.y - eyeHeight;
         const blockCenterY = y + 0.5;
         
@@ -806,7 +810,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Enderpearl throwing (Minecraft-style)
+    // Enderpearl throwing - based purely on player's view direction
     socket.on('throwEnderpearl', () => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -824,17 +828,36 @@ io.on('connection', (socket) => {
         
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
+        // Calculate throw direction based purely on player's rotation
+        // This is independent of what block they're looking at
         const throwPower = 1.5;
-        const offset = 0.5; // Start in front of player to avoid immediate collision
         
-        const startX = p.pos.x + (-Math.sin(p.rot.yaw) * Math.cos(p.rot.pitch) * offset);
-        const startY = p.pos.y + (p.crouch ? 1.3 : 1.6) + (-Math.sin(p.rot.pitch) * offset);
-        const startZ = p.pos.z + (-Math.cos(p.rot.yaw) * Math.cos(p.rot.pitch) * offset);
+        // Calculate eye position
+        const eyeHeight = p.crouch ? CROUCH_HEIGHT : EYE_HEIGHT;
+        const eyeX = p.pos.x;
+        const eyeY = p.pos.y - eyeHeight;
+        const eyeZ = p.pos.z;
         
+        // Calculate direction from player's yaw and pitch
+        const yaw = p.rot.yaw;
+        const pitch = p.rot.pitch;
+        
+        // Calculate forward vector from yaw and pitch
+        const forwardX = -Math.sin(yaw) * Math.cos(pitch);
+        const forwardY = -Math.sin(pitch);
+        const forwardZ = -Math.cos(yaw) * Math.cos(pitch);
+        
+        // Start position is slightly in front of player's eyes
+        const startOffset = 0.5;
+        const startX = eyeX + forwardX * startOffset;
+        const startY = eyeY + forwardY * startOffset;
+        const startZ = eyeZ + forwardZ * startOffset;
+        
+        // Velocity is forward direction times throw power
         const velocity = {
-            x: -Math.sin(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower,
-            y: -Math.sin(p.rot.pitch) * throwPower,
-            z: -Math.cos(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower
+            x: forwardX * throwPower,
+            y: forwardY * throwPower,
+            z: forwardZ * throwPower
         };
         
         const pearlId = `pearl-${socket.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -867,6 +890,9 @@ io.on('connection', (socket) => {
             y: pearl.y,
             z: pearl.z
         });
+        
+        // Send notification
+        socket.emit('notification', 'Enderpearl thrown!');
     });
 
     socket.on('disconnect', () => {
