@@ -299,9 +299,6 @@ function eliminatePlayer(playerId, eliminatorId) {
         eliminatorId: eliminatorId
     });
     
-    // Remove player body for all other players
-    socket.broadcast.emit('removePlayer', playerId);
-    
     // Check if game should end (only if there's 1 or fewer active players left)
     const activePlayers = getActivePlayers();
     console.log(`Active players after elimination: ${activePlayers.length}`);
@@ -346,7 +343,6 @@ function resetGame() {
         p.health = PLAYER_MAX_HEALTH;
         p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
         p.equippedWeapon = null;
-        p.lastEnderpearlThrow = 0;
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -477,8 +473,7 @@ io.on('connection', (socket) => {
         health: PLAYER_MAX_HEALTH,
         id: socket.id,
         lastHitTime: 0,
-        equippedWeapon: null,
-        lastEnderpearlThrow: 0
+        equippedWeapon: null
     };
     
     players.set(socket.id, playerState);
@@ -806,7 +801,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Enderpearl throwing (Minecraft-style) - FIXED VERSION with 0.1 second cooldown
+    // Enderpearl throwing (Minecraft-style)
     socket.on('throwEnderpearl', () => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -817,24 +812,13 @@ io.on('connection', (socket) => {
             return;
         }
         
-        // Check server-side cooldown (0.1 seconds = 100ms)
-        const now = Date.now();
-        if (now - p.lastEnderpearlThrow < 100) {
-            socket.emit('notification', 'Enderpearl cooldown!');
-            return;
-        }
-        
-        // Reduce count first (like Minecraft - you throw even if you die)
         slot.count--;
         if (slot.count === 0) {
             p.inventory[p.selected] = null;
         }
         
-        p.lastEnderpearlThrow = now;
-        
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
-        // Minecraft-like throw physics
         const throwPower = 1.5;
         const velocity = {
             x: -Math.sin(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower,
@@ -842,12 +826,12 @@ io.on('connection', (socket) => {
             z: -Math.cos(p.rot.yaw) * Math.cos(p.rot.pitch) * throwPower
         };
         
-        const pearlId = `pearl-${socket.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const pearlId = `pearl-${socket.id}-${Date.now()}`;
         const pearl = {
             id: pearlId,
             owner: socket.id,
             x: p.pos.x,
-            y: p.pos.y + (p.crouch ? 1.3 : 1.6), // Start at eye level
+            y: p.pos.y + (p.crouch ? 1.3 : 1.6),
             z: p.pos.z,
             vx: velocity.x,
             vy: velocity.y,
@@ -856,15 +840,10 @@ io.on('connection', (socket) => {
             drag: 0.99,
             lastUpdate: Date.now(),
             createdAt: Date.now(),
-            landed: false,
-            // Minecraft-like properties
-            boundingBox: { width: 0.25, height: 0.25, depth: 0.25 }, // Small hitbox like Minecraft
-            noClip: true // Can pass through blocks initially like in Minecraft
+            landed: false
         };
         
         enderpearls.set(pearlId, pearl);
-        
-        console.log(`Enderpearl thrown by ${socket.id}, ID: ${pearlId}`);
         
         io.emit('addEnderpearl', {
             id: pearl.id,
@@ -879,53 +858,26 @@ io.on('connection', (socket) => {
         
         const p = players.get(socket.id);
         if (p) {
-            // If player was in a match and not a spectator
-            if (gameActive && !p.spectator) {
-                // Remove player's bed if they have one
-                if (p.bedPos) {
-                    removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
-                    
-                    // Find and free the occupied island
-                    for (let i = 0; i < ironIslands.length; i++) {
-                        if (ironIslands[i].bedX === p.bedPos.x && 
-                            ironIslands[i].bedY === p.bedPos.y && 
-                            ironIslands[i].bedZ === p.bedPos.z) {
-                            const index = occupiedIronIslands.indexOf(i);
-                            if (index > -1) {
-                                occupiedIronIslands.splice(index, 1);
-                            }
-                            break;
+            // Remove player's bed if they have one
+            if (p.bedPos) {
+                removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
+                
+                // Find and free the occupied island
+                for (let i = 0; i < ironIslands.length; i++) {
+                    if (ironIslands[i].bedX === p.bedPos.x && 
+                        ironIslands[i].bedY === p.bedPos.y && 
+                        ironIslands[i].bedZ === p.bedPos.z) {
+                        const index = occupiedIronIslands.indexOf(i);
+                        if (index > -1) {
+                            occupiedIronIslands.splice(index, 1);
                         }
+                        break;
                     }
                 }
-                
-                // IMPORTANT: Broadcast removal of player body
-                io.emit('removePlayer', socket.id);
-                
-                players.delete(socket.id);
-                
-                // Check if game should end due to lack of players (1 or less)
-                const activePlayers = getActivePlayers();
-                console.log(`Active players after disconnect: ${activePlayers.length}`);
-                
-                if (activePlayers.length <= 1) {
-                    gameActive = false;
-                    let winnerId = null;
-                    if (activePlayers.length === 1) {
-                        winnerId = activePlayers[0].id;
-                        console.log(`Game over! Winner: ${winnerId}`);
-                    } else {
-                        console.log('Game over! No winner.');
-                    }
-                    io.emit('gameEnd', { winner: winnerId });
-                    stopRoundTimer();
-                    setTimeout(resetGame, 5000);
-                }
-            } else {
-                // If not in a match or spectator, just remove the player
-                players.delete(socket.id);
-                io.emit('removePlayer', socket.id);
             }
+            
+            players.delete(socket.id);
+            io.emit('removePlayer', socket.id);
             
             updateWaitingMessages();
             
@@ -938,6 +890,20 @@ io.on('connection', (socket) => {
                     io.emit('notification', 'Player left. Countdown cancelled.');
                     occupiedIronIslands = [];
                     initWorld();
+                }
+            } else if (gameActive) {
+                // Check if game should end due to lack of players
+                const activePlayers = getActivePlayers();
+                if (activePlayers.length <= 1) {
+                    gameActive = false;
+                    if (activePlayers.length === 1) {
+                        const winnerId = Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
+                        io.emit('gameEnd', { winner: winnerId });
+                    } else {
+                        io.emit('gameEnd', { winner: null });
+                    }
+                    stopRoundTimer();
+                    setTimeout(resetGame, 5000);
                 }
             }
         }
@@ -967,7 +933,7 @@ setInterval(() => {
             suddenDeath = true;
         }
 
-        // Update enderpearls with Minecraft physics - FIXED VERSION
+        // Update enderpearls with Minecraft physics
         const pearlUpdates = [];
         enderpearls.forEach((pearl, id) => {
             if (pearl.landed) return;
@@ -982,79 +948,38 @@ setInterval(() => {
             
             // Apply velocity with air resistance
             pearl.vx *= pearl.drag;
-            pearl.vy *= pearl.drag;
             pearl.vz *= pearl.drag;
             
-            const speedMultiplier = 20;
-            pearl.x += pearl.vx * deltaTime * speedMultiplier;
-            pearl.y += pearl.vy * deltaTime * speedMultiplier;
-            pearl.z += pearl.vz * deltaTime * speedMultiplier;
+            pearl.x += pearl.vx * deltaTime * 20;
+            pearl.y += pearl.vy * deltaTime * 20;
+            pearl.z += pearl.vz * deltaTime * 20;
             
             // Check for collision with blocks or ground
             const checkX = Math.floor(pearl.x);
             const checkY = Math.floor(pearl.y);
             const checkZ = Math.floor(pearl.z);
             
-            // Check if pearl has hit ground or block
-            let collided = false;
-            
-            // Check ground collision
-            if (pearl.y <= 0.1) {
-                collided = true;
-            }
-            
-            // Check block collision
-            if (blocks.has(blockKey(checkX, checkY, checkZ))) {
-                collided = true;
-            }
-            
-            if (collided) {
+            if (pearl.y <= 0.1 || blocks.has(blockKey(checkX, checkY, checkZ))) {
                 pearl.landed = true;
                 
                 // Teleport player with damage (Minecraft: 5 damage = 2.5 hearts)
                 const player = players.get(pearl.owner);
                 if (player && !player.spectator) {
-                    // Apply ender pearl damage (5 damage = 2.5 hearts)
-                    player.health -= 5;
+                    player.health -= 2.5; // 2.5 hearts damage
                     
-                    // Teleport player to pearl location
-                    let teleportX = pearl.x;
-                    let teleportY = pearl.y + 1; // Start one block above the pearl
-                    let teleportZ = pearl.z;
+                    // Teleport player
+                    player.pos.x = pearl.x;
+                    player.pos.y = pearl.y + 0.5;
+                    player.pos.z = pearl.z;
                     
-                    // Find safe position (not inside blocks)
-                    let attempts = 0;
-                    let foundSafeSpot = false;
-                    
-                    // Check upwards for safe position
-                    while (attempts < 10 && !foundSafeSpot) {
-                        // Check if the position is inside a block
-                        const checkBlockX = Math.floor(teleportX);
-                        const checkBlockY = Math.floor(teleportY);
-                        const checkBlockZ = Math.floor(teleportZ);
-                        
-                        const isInsideBlock = blocks.has(blockKey(checkBlockX, checkBlockY, checkBlockZ)) ||
-                                             blocks.has(blockKey(checkBlockX, checkBlockY + 1, checkBlockZ));
-                        
-                        if (!isInsideBlock) {
-                            foundSafeSpot = true;
-                            break;
-                        }
-                        
-                        // Move up one block
-                        teleportY += 1;
-                        attempts++;
+                    // Make sure player is on solid ground
+                    while (player.pos.y > 0 && blocks.has(blockKey(
+                        Math.floor(player.pos.x), 
+                        Math.floor(player.pos.y - 1), 
+                        Math.floor(player.pos.z)
+                    ))) {
+                        player.pos.y += 1;
                     }
-                    
-                    // If no safe spot found, use original position
-                    if (!foundSafeSpot) {
-                        teleportY = pearl.y + 2; // Default to 2 blocks above
-                    }
-                    
-                    // Update player position
-                    player.pos.x = teleportX;
-                    player.pos.y = teleportY;
-                    player.pos.z = teleportZ;
                     
                     io.to(pearl.owner).emit('teleport', {
                         x: player.pos.x,
@@ -1062,14 +987,7 @@ setInterval(() => {
                         z: player.pos.z
                     });
                     
-                    // Update health for all clients
-                    io.emit('playerHit', {
-                        attackerId: null,
-                        targetId: pearl.owner,
-                        newHealth: player.health
-                    });
-                    
-                    // Check if player died from ender pearl damage
+                    // Check if player died from enderpearl damage
                     if (player.health <= 0) {
                         const bedKey = player.bedPos ? blockKey(player.bedPos.x, player.bedPos.y, player.bedPos.z) : null;
                         const hasBed = player.bedPos && blocks.get(bedKey) === 'Bed';
@@ -1086,27 +1004,34 @@ setInterval(() => {
                                 pos: player.pos, 
                                 rot: player.rot 
                             });
-                            io.to(pearl.owner).emit('notification', 'You died by ender pearl and respawned at your bed!');
+                            io.emit('playerHit', {
+                                attackerId: null,
+                                targetId: pearl.owner,
+                                newHealth: player.health
+                            });
+                            io.to(pearl.owner).emit('notification', 'You died by enderpearl and respawned at your bed!');
                         } else {
+                            // Player eliminated by enderpearl
                             eliminatePlayer(pearl.owner, null);
                         }
                     } else {
-                        io.to(pearl.owner).emit('notification', 'Ender pearl teleport! Took 2.5 hearts damage.');
+                        // Just update health if player survived
+                        io.emit('playerHit', {
+                            attackerId: null,
+                            targetId: pearl.owner,
+                            newHealth: player.health
+                        });
                     }
                 }
                 
-                // Remove ender pearl after a short delay
+                // Remove enderpearl after a short delay
                 setTimeout(() => {
-                    if (enderpearls.has(id)) {
-                        enderpearls.delete(id);
-                        io.emit('removeEnderpearl', id);
-                        console.log(`Enderpearl ${id} removed (landed)`);
-                    }
+                    enderpearls.delete(id);
+                    io.emit('removeEnderpearl', id);
                 }, 100);
             } else if (now - pearl.createdAt > 30000) { // 30 second timeout
                 enderpearls.delete(id);
                 io.emit('removeEnderpearl', id);
-                console.log(`Enderpearl ${id} removed (timeout)`);
             } else {
                 pearlUpdates.push({
                     id: pearl.id,
