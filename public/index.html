@@ -386,6 +386,7 @@
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span><br>
         <span style="color: #88aaff">Right-Click with Enderpearl: Throw</span><br>
+        <span style="color: #ffaa00">Right-Click with Fireball: Throw (Destroys blocks)</span><br>
         <span style="color: #ff88ff">Click on Players: Attack</span>
     </div>
     <div id="break-progress">
@@ -429,6 +430,7 @@
         let isInRound = false;
         let wasBuying = false;
         let lastEnderpearlThrow = 0;
+        let lastFireballThrow = 0;
 
         // --- Config ---
         const BLOCK_TYPES = {
@@ -439,6 +441,7 @@
             'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
             'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
             'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
             'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
             'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
             'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true }
@@ -456,6 +459,7 @@
         const resourceSpawners = [];
         const resourcePickups = [];
         const projectiles = new Map();
+        const fireballProjectiles = new Map();
 
         // Breaking state
         let isBreaking = false;
@@ -644,6 +648,7 @@
         let goldTexture = null;
         let emeraldTexture = null;
         let enderpearlTexture = null;
+        let fireballTexture = null;
         let woodenSwordTexture = null;
         let ironSwordTexture = null;
         let emeraldSwordTexture = null;
@@ -659,62 +664,13 @@
             gold: 'https://i.ibb.co/27GwzjkT/pixilart-drawing-6.png',
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png',
             enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png',
+            fireball: 'https://i.ibb.co/Kc4xPxSJ/pixilart-drawing-9.png',
             woodenSword: 'https://i.ibb.co/mLZmwsJ/pixil-frame-0-10.png',
             ironSword: 'https://i.ibb.co/F4NZLPzj/pixil-frame-0-11.png',
             emeraldSword: 'https://i.ibb.co/przKkdMP/pixil-frame-0-12.png'
         };
 
-        // Preload enderpearl texture
-        const preloadEnderpearlTexture = () => {
-            return new Promise((resolve) => {
-                const enderpearlTextureUrls = [
-                    'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png',
-                    'https://i.imgur.com/0Xp7q3p.png' // Fallback
-                ];
-                
-                const loadTexture = (urlIndex) => {
-                    textureLoader.load(enderpearlTextureUrls[urlIndex], (texture) => {
-                        texture.magFilter = THREE.NearestFilter;
-                        texture.minFilter = THREE.NearestFilter;
-                        enderpearlTexture = texture;
-                        console.log('Enderpearl texture loaded');
-                        resolve();
-                    }, undefined, (error) => {
-                        console.error('Error loading enderpearl texture:', error);
-                        if (urlIndex < enderpearlTextureUrls.length - 1) {
-                            loadTexture(urlIndex + 1);
-                        } else {
-                            // Create a fallback texture
-                            const canvas = document.createElement('canvas');
-                            canvas.width = 64;
-                            canvas.height = 64;
-                            const ctx = canvas.getContext('2d');
-                            
-                            // Draw a green enderpearl-like circle
-                            ctx.fillStyle = '#00ff88';
-                            ctx.beginPath();
-                            ctx.arc(32, 32, 30, 0, Math.PI * 2);
-                            ctx.fill();
-                            
-                            // Add a highlight
-                            ctx.fillStyle = '#ffffff';
-                            ctx.beginPath();
-                            ctx.arc(15, 15, 10, 0, Math.PI * 2);
-                            ctx.fill();
-                            
-                            enderpearlTexture = new THREE.CanvasTexture(canvas);
-                            enderpearlTexture.magFilter = THREE.NearestFilter;
-                            enderpearlTexture.minFilter = THREE.NearestFilter;
-                            resolve();
-                        }
-                    });
-                };
-                
-                loadTexture(0);
-            });
-        };
-
-        // Load other textures
+        // Load textures
         textureLoader.load(TEXTURE_URLS.grass, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -765,6 +721,18 @@
             emeraldTexture = texture;
         });
 
+        textureLoader.load(TEXTURE_URLS.enderpearl, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            enderpearlTexture = texture;
+        });
+
+        textureLoader.load(TEXTURE_URLS.fireball, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            fireballTexture = texture;
+        });
+
         textureLoader.load(TEXTURE_URLS.woodenSword, (texture) => {
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
@@ -812,9 +780,6 @@
         };
         loadBreakingTextures();
 
-        // Preload enderpearl texture
-        preloadEnderpearlTexture();
-
         // --- World Generation ---
         function addBlockMesh(x, y, z, type) {
             const blockData = BLOCK_TYPES[type];
@@ -853,7 +818,6 @@
 
         // --- Enderpearl Functions ---
         function createEnderpearlMesh(data) {
-            // Create sprite with enderpearl texture
             let material;
             if (enderpearlTexture) {
                 material = new THREE.SpriteMaterial({ 
@@ -924,6 +888,144 @@
                 if (pearl.material) pearl.material.dispose();
                 projectiles.delete(id);
             }
+        }
+
+        // --- Fireball Functions ---
+        function createFireballMesh(data) {
+            let material;
+            if (fireballTexture) {
+                material = new THREE.SpriteMaterial({ 
+                    map: fireballTexture,
+                    transparent: true,
+                    opacity: 0.9,
+                    color: 0xff5500
+                });
+            } else {
+                // Fallback to colored sprite
+                material = new THREE.SpriteMaterial({ 
+                    color: 0xff5500,
+                    transparent: true,
+                    opacity: 0.9
+                });
+            }
+            
+            const fireball = new THREE.Sprite(material);
+            fireball.position.set(data.x, data.y, data.z);
+            fireball.scale.set(0.8, 0.8, 1);
+            
+            // Store velocity for interpolation
+            fireball.userData = { 
+                id: data.id, 
+                type: 'fireball',
+                owner: data.owner,
+                velocity: data.velocity,
+                lastUpdate: Date.now(),
+                lastPos: { x: data.x, y: data.y, z: data.z }
+            };
+            
+            scene.add(fireball);
+            fireballProjectiles.set(data.id, fireball);
+            return fireball;
+        }
+
+        function updateFireballMesh(fireballData) {
+            const fireball = fireballProjectiles.get(fireballData.id);
+            if (fireball) {
+                // Smooth interpolation to server position
+                if (fireball.userData.lastPos) {
+                    const lerpFactor = 0.3;
+                    fireball.position.x = THREE.MathUtils.lerp(
+                        fireball.position.x,
+                        fireballData.x,
+                        lerpFactor
+                    );
+                    fireball.position.y = THREE.MathUtils.lerp(
+                        fireball.position.y,
+                        fireballData.y,
+                        lerpFactor
+                    );
+                    fireball.position.z = THREE.MathUtils.lerp(
+                        fireball.position.z,
+                        fireballData.z,
+                        lerpFactor
+                    );
+                } else {
+                    fireball.position.set(fireballData.x, fireballData.y, fireballData.z);
+                }
+            }
+        }
+
+        function removeFireballMesh(id) {
+            const fireball = fireballProjectiles.get(id);
+            if (fireball) {
+                scene.remove(fireball);
+                if (fireball.material) fireball.material.dispose();
+                fireballProjectiles.delete(id);
+            }
+        }
+
+        // Fireball explosion effect
+        function createFireballExplosion(x, y, z) {
+            // Create explosion particles
+            const particleCount = 20;
+            const explosionGroup = new THREE.Group();
+            
+            for (let i = 0; i < particleCount; i++) {
+                const geometry = new THREE.SphereGeometry(0.1, 8, 8);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: Math.random() > 0.5 ? 0xff5500 : 0xffaa00,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const particle = new THREE.Mesh(geometry, material);
+                
+                // Random direction
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 2 + Math.random() * 3;
+                particle.userData.velocity = {
+                    x: Math.cos(angle) * speed,
+                    y: Math.random() * speed,
+                    z: Math.sin(angle) * speed
+                };
+                particle.userData.life = 1.0;
+                particle.userData.decay = 0.05 + Math.random() * 0.05;
+                
+                particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+                explosionGroup.add(particle);
+            }
+            
+            scene.add(explosionGroup);
+            
+            // Animate explosion
+            function animateExplosion() {
+                let allDead = true;
+                
+                explosionGroup.children.forEach(particle => {
+                    particle.userData.life -= particle.userData.decay;
+                    
+                    if (particle.userData.life > 0) {
+                        allDead = false;
+                        particle.position.x += particle.userData.velocity.x * 0.1;
+                        particle.position.y += particle.userData.velocity.y * 0.1;
+                        particle.position.z += particle.userData.velocity.z * 0.1;
+                        particle.material.opacity = particle.userData.life;
+                        particle.scale.setScalar(particle.userData.life);
+                    }
+                });
+                
+                if (!allDead) {
+                    requestAnimationFrame(animateExplosion);
+                } else {
+                    scene.remove(explosionGroup);
+                    // Dispose geometry and materials
+                    explosionGroup.children.forEach(particle => {
+                        particle.geometry.dispose();
+                        particle.material.dispose();
+                    });
+                }
+            }
+            
+            animateExplosion();
         }
 
         // --- Sword Functions ---
@@ -1356,6 +1458,34 @@
                     return;
                 }
                 
+                // Check if we have a fireball selected
+                else if (currentSlot && currentSlot.type === 'Fireball' && currentSlot.count > 0) {
+                    // Check client-side cooldown (2 seconds = 2000ms)
+                    const now = Date.now();
+                    if (now - lastFireballThrow < 2000) {
+                        socket.emit('notification', 'Fireball cooldown!');
+                        return;
+                    }
+                    
+                    // Calculate target position (looking direction, 50 blocks away)
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    direction.applyQuaternion(camera.quaternion);
+                    direction.normalize();
+                    
+                    // Set throw distance
+                    const throwDistance = 50;
+                    const targetPos = {
+                        x: camera.position.x + direction.x * throwDistance,
+                        y: camera.position.y + direction.y * throwDistance,
+                        z: camera.position.z + direction.z * throwDistance
+                    };
+                    
+                    // Send throw event with target position
+                    socket.emit('throwFireball', targetPos);
+                    lastFireballThrow = now;
+                    return;
+                }
+                
                 // Regular block placement
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0 && currentSlot && currentSlot.count > 0) {
@@ -1559,6 +1689,49 @@
                     // Add a slight pulsing effect
                     const pulse = 0.1 * Math.sin(now / 200);
                     pearl.scale.set(0.5 + pulse, 0.5 + pulse, 1);
+                }
+            });
+
+            // Update fireball animations
+            fireballProjectiles.forEach((fireball, id) => {
+                const userData = fireball.userData;
+                if (!userData || !userData.velocity) return;
+                
+                // Calculate time since last update
+                const deltaTime = (now - userData.lastUpdate) / 1000;
+                
+                if (deltaTime > 0) {
+                    // Store last position for interpolation
+                    userData.lastPos = {
+                        x: fireball.position.x,
+                        y: fireball.position.y,
+                        z: fireball.position.z
+                    };
+                    
+                    // Update position based on velocity (client-side prediction)
+                    fireball.position.x += userData.velocity.x * deltaTime;
+                    fireball.position.y += userData.velocity.y * deltaTime;
+                    fireball.position.z += userData.velocity.z * deltaTime;
+                    
+                    // Apply gravity
+                    const GRAVITY = 10;
+                    userData.velocity.y -= GRAVITY * deltaTime;
+                    
+                    userData.lastUpdate = now;
+                    
+                    // Make the fireball face the camera
+                    fireball.lookAt(camera.position);
+                    
+                    // Add a spinning effect
+                    fireball.material.rotation += 0.2;
+                    fireball.material.needsUpdate = true;
+                    
+                    // Add a pulsing effect
+                    const pulse = 0.15 * Math.sin(now / 150);
+                    fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
+                    
+                    // Add glow effect
+                    fireball.material.opacity = 0.7 + 0.3 * Math.sin(now / 200);
                 }
             });
 
@@ -1796,6 +1969,7 @@
                         else if (slot.type === 'Stone') icon.src = TEXTURE_URLS.stone;
                         else if (slot.type === 'Obsidian') icon.src = TEXTURE_URLS.obsidian;
                         else if (slot.type === 'Enderpearl') icon.src = TEXTURE_URLS.enderpearl;
+                        else if (slot.type === 'Fireball') icon.src = TEXTURE_URLS.fireball;
                         else if (slot.type === 'Wooden Sword') icon.src = TEXTURE_URLS.woodenSword;
                         else if (slot.type === 'Iron Sword') icon.src = TEXTURE_URLS.ironSword;
                         else if (slot.type === 'Emerald Sword') icon.src = TEXTURE_URLS.emeraldSword;
@@ -1840,6 +2014,7 @@
                 else if (name === 'Obsidian') imageUrl = TEXTURE_URLS.obsidian;
                 else if (name === 'Glass') imageUrl = '';
                 else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
+                else if (name === 'Fireball') imageUrl = TEXTURE_URLS.fireball;
                 else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
                 else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
                 else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
@@ -2148,6 +2323,35 @@
             removeEnderpearlMesh(id);
         });
 
+        // Fireball events
+        socket.on('addFireball', (data) => {
+            createFireballMesh(data);
+        });
+
+        socket.on('updateFireball', (data) => {
+            if (Array.isArray(data)) {
+                data.forEach(fireball => updateFireballMesh(fireball));
+            } else {
+                updateFireballMesh(data);
+            }
+        });
+
+        socket.on('removeFireball', (id) => {
+            removeFireballMesh(id);
+        });
+
+        socket.on('fireballExplosion', ({ x, y, z, blocksDestroyed }) => {
+            // Create explosion effect
+            createFireballExplosion(x, y, z);
+            
+            // Remove blocks that were destroyed by the fireball
+            if (blocksDestroyed) {
+                blocksDestroyed.forEach(({ x, y, z }) => {
+                    removeBlockMesh(x, y, z);
+                });
+            }
+        });
+
         socket.on('removePlayer', (id) => {
             removeOtherPlayer(id);
         });
@@ -2240,6 +2444,12 @@
             });
             projectiles.clear();
             
+            // Clear fireballs
+            fireballProjectiles.forEach((fireball, id) => {
+                removeFireballMesh(id);
+            });
+            fireballProjectiles.clear();
+            
             // Clear other players
             otherPlayers.forEach((op, id) => {
                 scene.remove(op.group);
@@ -2271,6 +2481,7 @@
             });
             
             setSpectatorMode(true);
+            showNotification('Game reset! Waiting for players...', 3000);
         });
 
         socket.on('playerReset', (data) => {
