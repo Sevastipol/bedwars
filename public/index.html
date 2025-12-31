@@ -460,6 +460,9 @@
         const resourcePickups = [];
         const projectiles = new Map();
         const fireballProjectiles = new Map();
+        
+        // Breaking overlays for other players - NEW: Store breaking overlays for all players
+        const breakingOverlays = new Map(); // Format: "x,y,z" -> { mesh, progress, lastUpdate }
 
         // Breaking state
         let isBreaking = false;
@@ -896,7 +899,6 @@
             if (fireballTexture) {
                 material = new THREE.SpriteMaterial({ 
                     map: fireballTexture,
-                    // REMOVED transparency - fireball should be opaque
                     color: 0xA5A5A5,
                     opacity: 1.0,
                     transparent: true
@@ -912,7 +914,7 @@
             
             const fireball = new THREE.Sprite(material);
             fireball.position.set(data.x, data.y, data.z);
-            fireball.scale.set(0.8, 0.8, 1);
+            fireball.scale.set(0.8, 0.8, 1); // Fixed scale, no pulsing
             
             // Store velocity for interpolation
             fireball.userData = { 
@@ -1098,6 +1100,87 @@
                     playerSwords.set(playerId, sword);
                 }
             }
+        }
+
+        // --- Breaking Animation Functions for Other Players ---
+        function createOtherPlayerBreakingOverlay(x, y, z, progress) {
+            const key = `${x},${y},${z}`;
+            
+            // Remove existing overlay if any
+            if (breakingOverlays.has(key)) {
+                const existing = breakingOverlays.get(key);
+                scene.remove(existing.mesh);
+                breakingOverlays.delete(key);
+            }
+            
+            // Create new overlay
+            if (breakingTextures.length > 0) {
+                const textureIndex = Math.min(Math.floor(progress * 9), 8);
+                const overlayMaterial = new THREE.MeshBasicMaterial({
+                    map: breakingTextures[textureIndex],
+                    transparent: true,
+                    opacity: 0.8,
+                    depthWrite: false
+                });
+                const overlay = new THREE.Mesh(
+                    new THREE.BoxGeometry(1.01, 1.01, 1.01),
+                    overlayMaterial
+                );
+                overlay.position.set(x + 0.5, y + 0.5, z + 0.5);
+                scene.add(overlay);
+                
+                breakingOverlays.set(key, {
+                    mesh: overlay,
+                    progress: progress,
+                    lastUpdate: Date.now()
+                });
+            }
+        }
+
+        function updateOtherPlayerBreakingOverlay(x, y, z, progress) {
+            const key = `${x},${y},${z}`;
+            
+            if (breakingOverlays.has(key)) {
+                const data = breakingOverlays.get(key);
+                data.progress = progress;
+                data.lastUpdate = Date.now();
+                
+                if (breakingTextures.length > 0) {
+                    const textureIndex = Math.min(Math.floor(progress * 9), 8);
+                    data.mesh.material.map = breakingTextures[textureIndex];
+                    data.mesh.material.needsUpdate = true;
+                }
+            } else {
+                createOtherPlayerBreakingOverlay(x, y, z, progress);
+            }
+        }
+
+        function removeOtherPlayerBreakingOverlay(x, y, z) {
+            const key = `${x},${y},${z}`;
+            
+            if (breakingOverlays.has(key)) {
+                const data = breakingOverlays.get(key);
+                scene.remove(data.mesh);
+                breakingOverlays.delete(key);
+            }
+        }
+
+        // Clean up old breaking overlays
+        function cleanupOldBreakingOverlays() {
+            const now = Date.now();
+            const toRemove = [];
+            
+            breakingOverlays.forEach((data, key) => {
+                if (now - data.lastUpdate > 5000) { // Remove after 5 seconds of no updates
+                    toRemove.push(key);
+                }
+            });
+            
+            toRemove.forEach(key => {
+                const data = breakingOverlays.get(key);
+                scene.remove(data.mesh);
+                breakingOverlays.delete(key);
+            });
         }
 
         // --- Resource Spawners ---
@@ -1414,6 +1497,17 @@
                         breakingDuration = BLOCK_TYPES[type].breakTime * 1000;
                         document.getElementById('break-progress').style.display = 'block';
                         
+                        // Send breaking start to server
+                        const x = Math.floor(breakingBlock.position.x - 0.5);
+                        const y = Math.floor(breakingBlock.position.y - 0.5);
+                        const z = Math.floor(breakingBlock.position.z - 0.5);
+                        
+                        socket.emit('startBreaking', {
+                            x, y, z,
+                            type: type,
+                            breakTime: breakingDuration
+                        });
+                        
                         if (!breakingOverlay && breakingTextures.length > 0) {
                             const overlayMaterial = new THREE.MeshBasicMaterial({
                                 map: breakingTextures[0],
@@ -1529,6 +1623,15 @@
 
         document.addEventListener('mouseup', (e) => {
             if (e.button === 0) {
+                if (isBreaking && breakingBlock) {
+                    // Send breaking stop to server
+                    const x = Math.floor(breakingBlock.position.x - 0.5);
+                    const y = Math.floor(breakingBlock.position.y - 0.5);
+                    const z = Math.floor(breakingBlock.position.z - 0.5);
+                    
+                    socket.emit('stopBreaking', { x, y, z });
+                }
+                
                 isBreaking = false;
                 breakingBlock = null;
                 document.getElementById('break-progress').style.display = 'none';
@@ -1577,6 +1680,7 @@
         let prevTime = performance.now();
         let lastGeneratorUpdate = 0;
         let swordBobTime = 0;
+        let lastBreakingProgressEmitted = 0;
 
         function animate() {
             requestAnimationFrame(animate);
@@ -1590,9 +1694,19 @@
                 });
                 lastGeneratorUpdate = time;
             }
+            
+            // Clean up old breaking overlays
+            cleanupOldBreakingOverlays();
 
             if (isBreaking && breakingBlock && !isSpectator) {
                 if (!isStillLookingAtBlock()) {
+                    if (breakingBlock) {
+                        const x = Math.floor(breakingBlock.position.x - 0.5);
+                        const y = Math.floor(breakingBlock.position.y - 0.5);
+                        const z = Math.floor(breakingBlock.position.z - 0.5);
+                        socket.emit('stopBreaking', { x, y, z });
+                    }
+                    
                     isBreaking = false;
                     breakingBlock = null;
                     document.getElementById('break-progress').style.display = 'none';
@@ -1603,15 +1717,28 @@
                     }
                 } else {
                     const elapsed = Date.now() - breakingStartTime;
-                    const progress = Math.min((elapsed / breakingDuration) * 100, 100);
-                    document.getElementById('break-progress-bar').style.width = progress + '%';
+                    const progress = Math.min(elapsed / breakingDuration, 1);
+                    document.getElementById('break-progress-bar').style.width = (progress * 100) + '%';
 
                     if (breakingOverlay && breakingTextures.length > 0) {
-                        const textureIndex = Math.floor(progress / 10) - 1;
+                        const textureIndex = Math.min(Math.floor(progress * 9), 8);
                         if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
                             breakingOverlay.material.map = breakingTextures[textureIndex];
                             breakingOverlay.material.needsUpdate = true;
                         }
+                    }
+                    
+                    // Send breaking progress updates to server periodically
+                    if (time - lastBreakingProgressEmitted > 100) { // Every 100ms
+                        const x = Math.floor(breakingBlock.position.x - 0.5);
+                        const y = Math.floor(breakingBlock.position.y - 0.5);
+                        const z = Math.floor(breakingBlock.position.z - 0.5);
+                        
+                        socket.emit('breakingProgress', {
+                            x, y, z,
+                            progress: progress
+                        });
+                        lastBreakingProgressEmitted = time;
                     }
 
                     if (elapsed >= breakingDuration) {
@@ -1619,6 +1746,10 @@
                         const y = Math.floor(breakingBlock.position.y - 0.5);
                         const z = Math.floor(breakingBlock.position.z - 0.5);
                         socket.emit('breakAttempt', { x, y, z });
+                        
+                        // Send breaking stop
+                        socket.emit('stopBreaking', { x, y, z });
+                        
                         isBreaking = false;
                         breakingBlock = null;
                         document.getElementById('break-progress').style.display = 'none';
@@ -1695,7 +1826,7 @@
                 }
             });
 
-            // Update fireball animations
+            // Update fireball animations - REMOVED SPINNING AND PULSING
             fireballProjectiles.forEach((fireball, id) => {
                 const userData = fireball.userData;
                 if (!userData || !userData.velocity) return;
@@ -1722,18 +1853,23 @@
                     
                     userData.lastUpdate = now;
                     
-                    // Make the fireball face the camera
+                    // Make the fireball face the camera - NO SPINNING
                     fireball.lookAt(camera.position);
                     
-                    // Add a spinning effect
-                    fireball.material.rotation += 0.2;
+                    // REMOVED: Spinning effect
+                    // fireball.material.rotation += 0.2;
+                    // fireball.material.needsUpdate = true;
+                    
+                    // REMOVED: Pulsing effect - fixed scale only
+                    // const pulse = 0.15 * Math.sin(now / 150);
+                    // fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
+                    
+                    // Fixed scale only - no changes in size
+                    fireball.scale.set(0.8, 0.8, 1);
+                    
+                    // Fixed opacity at 1.0
+                    fireball.material.opacity = 1.0;
                     fireball.material.needsUpdate = true;
-                    
-                    // Add a pulsing effect (but keep opacity at 1.0)
-                    const pulse = 0.15 * Math.sin(now / 150);
-                    fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
-                    
-                    // Fireball is not transparent anymore, so no opacity changes
                 }
             });
 
@@ -2360,6 +2496,25 @@
             }
         });
 
+        // Breaking animation events for other players
+        socket.on('startBreaking', ({ x, y, z, playerId, breakTime }) => {
+            if (playerId === socket.id) return; // Don't show our own breaking overlay
+            
+            createOtherPlayerBreakingOverlay(x, y, z, 0);
+        });
+
+        socket.on('breakingProgress', ({ x, y, z, playerId, progress }) => {
+            if (playerId === socket.id) return; // Don't update our own breaking overlay
+            
+            updateOtherPlayerBreakingOverlay(x, y, z, progress);
+        });
+
+        socket.on('stopBreaking', ({ x, y, z, playerId }) => {
+            if (playerId === socket.id) return; // Don't remove our own breaking overlay
+            
+            removeOtherPlayerBreakingOverlay(x, y, z);
+        });
+
         socket.on('removePlayer', (id) => {
             removeOtherPlayer(id);
         });
@@ -2465,6 +2620,12 @@
             otherPlayers.clear();
             playerHealth.clear();
             playerSwords.clear();
+            
+            // Clear breaking overlays
+            breakingOverlays.forEach((data, key) => {
+                scene.remove(data.mesh);
+            });
+            breakingOverlays.clear();
             
             // Clear sword in hand
             if (swordInHand) {
