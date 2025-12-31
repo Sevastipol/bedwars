@@ -431,11 +431,6 @@
         let wasBuying = false;
         let lastEnderpearlThrow = 0;
         let lastFireballThrow = 0;
-        
-        // Physics loop variables
-        let physicsInterval = null;
-        let lastPhysicsUpdate = Date.now();
-        const PHYSICS_UPDATE_RATE = 50; // 20 FPS for physics
 
         // --- Config ---
         const BLOCK_TYPES = {
@@ -472,7 +467,6 @@
         let breakingStartTime = 0;
         let breakingDuration = 0;
         let breakingOverlay = null;
-        let breakingProgress = 0;
 
         // Crouching state
         let isCrouching = false;
@@ -1415,7 +1409,6 @@
                         breakingBlock = obj;
                         breakingStartTime = Date.now();
                         breakingDuration = BLOCK_TYPES[type].breakTime * 1000;
-                        breakingProgress = 0;
                         document.getElementById('break-progress').style.display = 'block';
                         
                         if (!breakingOverlay && breakingTextures.length > 0) {
@@ -1535,7 +1528,6 @@
             if (e.button === 0) {
                 isBreaking = false;
                 breakingBlock = null;
-                breakingProgress = 0;
                 document.getElementById('break-progress').style.display = 'none';
                 document.getElementById('break-progress-bar').style.width = '0%';
                 if (breakingOverlay) {
@@ -1579,137 +1571,6 @@
             return true;
         }
 
-        // --- Physics Update Function ---
-        function updatePhysics() {
-            const now = Date.now();
-            const delta = Math.min((now - lastPhysicsUpdate) / 1000, 0.1);
-            lastPhysicsUpdate = now;
-            
-            // Update player movement and physics
-            if (!isSpectator && !isBreaking && isInRound) {
-                velocity.y -= 20.0 * delta;
-
-                const direction = new THREE.Vector3();
-                direction.z = Number(moveState.fwd) - Number(moveState.bwd);
-                direction.x = Number(moveState.r) - Number(moveState.l);
-                direction.normalize();
-
-                const baseSpeed = 5.0;
-                const speed = isCrouching ? baseSpeed * 0.6 : baseSpeed;
-
-                if (direction.x !== 0) {
-                    const moveDir = new THREE.Vector3(1, 0, 0);
-                    moveDir.applyQuaternion(camera.quaternion);
-                    moveDir.y = 0;
-                    moveDir.normalize();
-                    if (!wouldFallOffEdge(camera.position, moveDir.multiplyScalar(direction.x))) {
-                        controls.moveRight(direction.x * speed * delta);
-                        if (checkCollision(camera.position)) controls.moveRight(-direction.x * speed * delta);
-                    }
-                }
-
-                if (direction.z !== 0) {
-                    const moveDir = new THREE.Vector3(0, 0, -1);
-                    moveDir.applyQuaternion(camera.quaternion);
-                    moveDir.y = 0;
-                    moveDir.normalize();
-                    if (!wouldFallOffEdge(camera.position, moveDir.multiplyScalar(direction.z))) {
-                        controls.moveForward(direction.z * speed * delta);
-                        if (checkCollision(camera.position)) controls.moveForward(-direction.z * speed * delta);
-                    }
-                }
-
-                camera.position.y += velocity.y * delta;
-                onGround = false;
-
-                const currentEyeHeightForFoot = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
-                const footBox = new THREE.Box3().setFromCenterAndSize(
-                    new THREE.Vector3(camera.position.x, camera.position.y - currentEyeHeightForFoot, camera.position.z),
-                    new THREE.Vector3(PLAYER_RADIUS, 0.2, PLAYER_RADIUS)
-                );
-
-                for (const b of blocksInScene) {
-                    const bBox = new THREE.Box3().setFromObject(b);
-                    if (footBox.intersectsBox(bBox)) {
-                        if (velocity.y < 0) {
-                            velocity.y = 0;
-                            camera.position.y = bBox.max.y + currentEyeHeightForFoot;
-                            onGround = true;
-                        }
-                    }
-                }
-            }
-            
-            // Update breaking progress
-            if (isBreaking && breakingBlock) {
-                if (!isStillLookingAtBlock()) {
-                    isBreaking = false;
-                    breakingBlock = null;
-                    breakingProgress = 0;
-                    document.getElementById('break-progress').style.display = 'none';
-                    document.getElementById('break-progress-bar').style.width = '0%';
-                    if (breakingOverlay) {
-                        scene.remove(breakingOverlay);
-                        breakingOverlay = null;
-                    }
-                } else {
-                    const elapsed = now - breakingStartTime;
-                    breakingProgress = Math.min(elapsed / breakingDuration, 1);
-                    
-                    if (breakingProgress >= 1) {
-                        const x = Math.floor(breakingBlock.position.x - 0.5);
-                        const y = Math.floor(breakingBlock.position.y - 0.5);
-                        const z = Math.floor(breakingBlock.position.z - 0.5);
-                        socket.emit('breakAttempt', { x, y, z });
-                        isBreaking = false;
-                        breakingBlock = null;
-                        breakingProgress = 0;
-                        document.getElementById('break-progress').style.display = 'none';
-                        document.getElementById('break-progress-bar').style.width = '0%';
-                        if (breakingOverlay) {
-                            scene.remove(breakingOverlay);
-                            breakingOverlay = null;
-                        }
-                    }
-                }
-            }
-            
-            // Send player update to server (continuous, even when shop is open)
-            if (socket.connected && !isSpectator && isInRound) {
-                const currentSlot = inventory[selectedSlotIndex];
-                const equippedWeapon = currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon ? currentSlot.type : null;
-                
-                socket.emit('playerUpdate', {
-                    pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-                    rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
-                    crouch: isCrouching,
-                    selected: selectedSlotIndex,
-                    spectator: isSpectator,
-                    equippedWeapon: equippedWeapon
-                });
-            }
-        }
-
-        // --- Start Physics Loop ---
-        function startPhysicsLoop() {
-            if (physicsInterval) clearInterval(physicsInterval);
-            physicsInterval = setInterval(updatePhysics, PHYSICS_UPDATE_RATE);
-            lastPhysicsUpdate = Date.now();
-        }
-
-        // Handle tab visibility changes
-        document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                console.log('Tab hidden, physics continues');
-            } else {
-                console.log('Tab visible');
-                // Ensure physics loop is running
-                if (!physicsInterval) {
-                    startPhysicsLoop();
-                }
-            }
-        });
-
         let prevTime = performance.now();
         let lastGeneratorUpdate = 0;
         let swordBobTime = 0;
@@ -1727,15 +1588,42 @@
                 lastGeneratorUpdate = time;
             }
 
-            // Update breaking progress bar visually
-            if (isBreaking && breakingProgress > 0) {
-                document.getElementById('break-progress-bar').style.width = (breakingProgress * 100) + '%';
-                
-                if (breakingOverlay && breakingTextures.length > 0) {
-                    const textureIndex = Math.floor(breakingProgress * 10) - 1;
-                    if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
-                        breakingOverlay.material.map = breakingTextures[textureIndex];
-                        breakingOverlay.material.needsUpdate = true;
+            if (isBreaking && breakingBlock && !isSpectator) {
+                if (!isStillLookingAtBlock()) {
+                    isBreaking = false;
+                    breakingBlock = null;
+                    document.getElementById('break-progress').style.display = 'none';
+                    document.getElementById('break-progress-bar').style.width = '0%';
+                    if (breakingOverlay) {
+                        scene.remove(breakingOverlay);
+                        breakingOverlay = null;
+                    }
+                } else {
+                    const elapsed = Date.now() - breakingStartTime;
+                    const progress = Math.min((elapsed / breakingDuration) * 100, 100);
+                    document.getElementById('break-progress-bar').style.width = progress + '%';
+
+                    if (breakingOverlay && breakingTextures.length > 0) {
+                        const textureIndex = Math.floor(progress / 10) - 1;
+                        if (textureIndex >= 0 && textureIndex < breakingTextures.length) {
+                            breakingOverlay.material.map = breakingTextures[textureIndex];
+                            breakingOverlay.material.needsUpdate = true;
+                        }
+                    }
+
+                    if (elapsed >= breakingDuration) {
+                        const x = Math.floor(breakingBlock.position.x - 0.5);
+                        const y = Math.floor(breakingBlock.position.y - 0.5);
+                        const z = Math.floor(breakingBlock.position.z - 0.5);
+                        socket.emit('breakAttempt', { x, y, z });
+                        isBreaking = false;
+                        breakingBlock = null;
+                        document.getElementById('break-progress').style.display = 'none';
+                        document.getElementById('break-progress-bar').style.width = '0%';
+                        if (breakingOverlay) {
+                            scene.remove(breakingOverlay);
+                            breakingOverlay = null;
+                        }
                     }
                 }
             }
@@ -1754,6 +1642,7 @@
                 
                 const floatOffset = Math.sin((now - pickup.userData.spawnTime) / 500) * 0.15;
                 pickup.position.y = pickup.userData.baseY + floatOffset;
+                
                 pickup.lookAt(camera.position);
 
                 const dist = camera.position.distanceTo(pickup.position);
@@ -1768,16 +1657,39 @@
                 const userData = pearl.userData;
                 if (!userData || !userData.velocity) return;
                 
-                // Make the enderpearl face the camera
-                pearl.lookAt(camera.position);
+                // Calculate time since last update
+                const deltaTime = (now - userData.lastUpdate) / 1000;
                 
-                // Add a spinning effect
-                pearl.material.rotation += 0.1;
-                pearl.material.needsUpdate = true;
-                
-                // Add a slight pulsing effect
-                const pulse = 0.1 * Math.sin(now / 200);
-                pearl.scale.set(0.5 + pulse, 0.5 + pulse, 1);
+                if (deltaTime > 0) {
+                    // Store last position for interpolation
+                    userData.lastPos = {
+                        x: pearl.position.x,
+                        y: pearl.position.y,
+                        z: pearl.position.z
+                    };
+                    
+                    // Update position based on velocity (client-side prediction)
+                    pearl.position.x += userData.velocity.x * deltaTime;
+                    pearl.position.y += userData.velocity.y * deltaTime;
+                    pearl.position.z += userData.velocity.z * deltaTime;
+                    
+                    // Apply gravity
+                    const GRAVITY = 20;
+                    userData.velocity.y -= GRAVITY * deltaTime;
+                    
+                    userData.lastUpdate = now;
+                    
+                    // Make the enderpearl face the camera
+                    pearl.lookAt(camera.position);
+                    
+                    // Add a spinning effect
+                    pearl.material.rotation += 0.1;
+                    pearl.material.needsUpdate = true;
+                    
+                    // Add a slight pulsing effect
+                    const pulse = 0.1 * Math.sin(now / 200);
+                    pearl.scale.set(0.5 + pulse, 0.5 + pulse, 1);
+                }
             });
 
             // Update fireball animations
@@ -1785,19 +1697,42 @@
                 const userData = fireball.userData;
                 if (!userData || !userData.velocity) return;
                 
-                // Make the fireball face the camera
-                fireball.lookAt(camera.position);
+                // Calculate time since last update
+                const deltaTime = (now - userData.lastUpdate) / 1000;
                 
-                // Add a spinning effect
-                fireball.material.rotation += 0.2;
-                fireball.material.needsUpdate = true;
-                
-                // Add a pulsing effect
-                const pulse = 0.15 * Math.sin(now / 150);
-                fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
-                
-                // Add glow effect
-                fireball.material.opacity = 0.7 + 0.3 * Math.sin(now / 200);
+                if (deltaTime > 0) {
+                    // Store last position for interpolation
+                    userData.lastPos = {
+                        x: fireball.position.x,
+                        y: fireball.position.y,
+                        z: fireball.position.z
+                    };
+                    
+                    // Update position based on velocity (client-side prediction)
+                    fireball.position.x += userData.velocity.x * deltaTime;
+                    fireball.position.y += userData.velocity.y * deltaTime;
+                    fireball.position.z += userData.velocity.z * deltaTime;
+                    
+                    // Apply gravity
+                    const GRAVITY = 10;
+                    userData.velocity.y -= GRAVITY * deltaTime;
+                    
+                    userData.lastUpdate = now;
+                    
+                    // Make the fireball face the camera
+                    fireball.lookAt(camera.position);
+                    
+                    // Add a spinning effect
+                    fireball.material.rotation += 0.2;
+                    fireball.material.needsUpdate = true;
+                    
+                    // Add a pulsing effect
+                    const pulse = 0.15 * Math.sin(now / 150);
+                    fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
+                    
+                    // Add glow effect
+                    fireball.material.opacity = 0.7 + 0.3 * Math.sin(now / 200);
+                }
             });
 
             // Update sword in hand position (bobbing animation)
@@ -1819,35 +1754,106 @@
                 swordInHand.rotation.z = Math.PI / 6;
             }
 
-            // Spectator movement
-            if (controls.isLocked && isSpectator) {
-                const direction = new THREE.Vector3();
-                direction.z = Number(moveState.fwd) - Number(moveState.bwd);
-                direction.x = Number(moveState.r) - Number(moveState.l);
-                direction.normalize();
-                
-                const speed = 10.0;
-                
-                if (direction.x !== 0) {
-                    const moveDir = new THREE.Vector3(1, 0, 0);
-                    moveDir.applyQuaternion(camera.quaternion);
-                    moveDir.normalize();
-                    controls.moveRight(direction.x * speed * delta);
-                }
+            if (controls.isLocked) {
+                if (isSpectator) {
+                    const direction = new THREE.Vector3();
+                    direction.z = Number(moveState.fwd) - Number(moveState.bwd);
+                    direction.x = Number(moveState.r) - Number(moveState.l);
+                    direction.normalize();
+                    
+                    const speed = 10.0;
+                    
+                    if (direction.x !== 0) {
+                        const moveDir = new THREE.Vector3(1, 0, 0);
+                        moveDir.applyQuaternion(camera.quaternion);
+                        moveDir.normalize();
+                        controls.moveRight(direction.x * speed * delta);
+                    }
 
-                if (direction.z !== 0) {
-                    const moveDir = new THREE.Vector3(0, 0, -1);
-                    moveDir.applyQuaternion(camera.quaternion);
-                    moveDir.normalize();
-                    controls.moveForward(direction.z * speed * delta);
+                    if (direction.z !== 0) {
+                        const moveDir = new THREE.Vector3(0, 0, -1);
+                        moveDir.applyQuaternion(camera.quaternion);
+                        moveDir.normalize();
+                        controls.moveForward(direction.z * speed * delta);
+                    }
+                    
+                    camera.position.y += velocity.y * delta;
+                    velocity.y = 0;
+                    onGround = true;
+                } else {
+                    velocity.y -= 20.0 * delta;
+
+                    const direction = new THREE.Vector3();
+                    direction.z = Number(moveState.fwd) - Number(moveState.bwd);
+                    direction.x = Number(moveState.r) - Number(moveState.l);
+                    direction.normalize();
+
+                    const baseSpeed = 5.0;
+                    const speed = isCrouching ? baseSpeed * 0.6 : baseSpeed;
+
+                    if (direction.x !== 0) {
+                        const moveDir = new THREE.Vector3(1, 0, 0);
+                        moveDir.applyQuaternion(camera.quaternion);
+                        moveDir.y = 0;
+                        moveDir.normalize();
+                        if (!wouldFallOffEdge(camera.position, moveDir.multiplyScalar(direction.x))) {
+                            controls.moveRight(direction.x * speed * delta);
+                            if (checkCollision(camera.position)) controls.moveRight(-direction.x * speed * delta);
+                        }
+                    }
+
+                    if (direction.z !== 0) {
+                        const moveDir = new THREE.Vector3(0, 0, -1);
+                        moveDir.applyQuaternion(camera.quaternion);
+                        moveDir.y = 0;
+                        moveDir.normalize();
+                        if (!wouldFallOffEdge(camera.position, moveDir.multiplyScalar(direction.z))) {
+                            controls.moveForward(direction.z * speed * delta);
+                            if (checkCollision(camera.position)) controls.moveForward(-direction.z * speed * delta);
+                        }
+                    }
+
+                    camera.position.y += velocity.y * delta;
+                    onGround = false;
+
+                    const currentEyeHeightForFoot = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
+                    const footBox = new THREE.Box3().setFromCenterAndSize(
+                        new THREE.Vector3(camera.position.x, camera.position.y - currentEyeHeightForFoot, camera.position.z),
+                        new THREE.Vector3(PLAYER_RADIUS, 0.2, PLAYER_RADIUS)
+                    );
+
+                    for (const b of blocksInScene) {
+                        const bBox = new THREE.Box3().setFromObject(b);
+                        if (footBox.intersectsBox(bBox)) {
+                            if (velocity.y < 0) {
+                                velocity.y = 0;
+                                camera.position.y = bBox.max.y + currentEyeHeightForFoot;
+                                onGround = true;
+                            }
+                        }
+                    }
+
+                    if (camera.position.y < -30 && isInRound) {
+                        // Death handled server-side
+                    }
                 }
-                
-                camera.position.y += velocity.y * delta;
-                velocity.y = 0;
-                onGround = true;
             }
 
-            // Update other players (visual interpolation)
+            if (controls.isLocked && socket.connected && time - lastPlayerUpdate > 50) {
+                const currentSlot = inventory[selectedSlotIndex];
+                const equippedWeapon = currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon ? currentSlot.type : null;
+                
+                socket.emit('playerUpdate', {
+                    pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                    rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
+                    crouch: isCrouching,
+                    selected: selectedSlotIndex,
+                    spectator: isSpectator,
+                    equippedWeapon: equippedWeapon
+                });
+                lastPlayerUpdate = time;
+            }
+
             otherPlayers.forEach((data, id) => {
                 if (data.spectator) {
                     data.group.visible = false;
@@ -1864,12 +1870,14 @@
                 }
                 data.group.scale.y = data.crouch ? 0.75 : 1;
                 
+                // Update health bar
                 if (data.healthBar && playerHealth.has(id)) {
                     const health = playerHealth.get(id);
                     data.healthBar.style.width = `${health * 10}%`;
                     data.healthBar.style.backgroundColor = health > 5 ? '#4CAF50' : health > 2 ? '#FFA500' : '#FF0000';
                 }
                 
+                // Update sword for other players
                 if (playerSwords.has(id)) {
                     const sword = playerSwords.get(id);
                     sword.lookAt(camera.position);
@@ -1879,6 +1887,8 @@
 
             renderer.render(scene, camera);
         }
+
+        let lastPlayerUpdate = 0;
 
         function addToInventory(blockType, amount) {
             for (let i = 0; i < INVENTORY_SIZE; i++) {
@@ -2037,9 +2047,7 @@
             
             if (isVisible) {
                 shop.style.display = 'none';
-                if (isFullscreen() && !controls.isLocked) {
-                    controls.lock();
-                }
+                controls.lock();
             } else {
                 shop.style.display = 'block';
                 controls.unlock();
@@ -2528,9 +2536,6 @@
         // Start
         setSpectatorMode(true);
         updateUI();
-        
-        // Start both loops
-        startPhysicsLoop();
         animate();
 
         window.addEventListener('resize', () => {
