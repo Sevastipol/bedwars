@@ -897,13 +897,14 @@
                 material = new THREE.SpriteMaterial({ 
                     map: fireballTexture,
                     // REMOVED transparency - fireball should be opaque
+                    color: 0x696969,
                     opacity: 1.0,
                     transparent: true
                 });
             } else {
                 // Fallback to original fireball color
                 material = new THREE.SpriteMaterial({ 
-                    color: 0xff5500, // Original fireball color
+                    color: 0x696969, // Original fireball color
                     opacity: 1.0,
                     transparent: true
                 });
