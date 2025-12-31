@@ -20,7 +20,7 @@ const BLOCK_TYPES = {
     'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
     'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
     'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
-    'Bed': { color: 0xff0000, breakTime: 2, buyAmount: 1, hasTexture: false },
+    'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
     'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
     'Wooden Sword': { color: 0x8B4513, cost: { iron: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
     'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
@@ -853,7 +853,7 @@ io.on('connection', (socket) => {
         
         // Normalize and set velocity (speed: 15 blocks per second)
         const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
-        const speed = 15;
+        const speed = 25;
         const velocity = {
             x: (direction.x / length) * speed,
             y: (direction.y / length) * speed,
