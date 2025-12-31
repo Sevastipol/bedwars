@@ -22,6 +22,7 @@ const BLOCK_TYPES = {
     'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
     'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
     'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
+    'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
     'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
     'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
     'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true }
@@ -39,6 +40,7 @@ const pickups = new Map();
 const spawners = [];
 const players = new Map();
 const enderpearls = new Map();
+const fireballs = new Map();
 let gameActive = false;
 let countdownTimer = null;
 let roundStartTime = null;
@@ -90,6 +92,11 @@ function removeBlock(x, y, z) {
             if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
                 p.bedPos = null;
                 io.to(id).emit('bedDestroyed');
+                
+                // Check if player should be eliminated immediately
+                if (!suddenDeath && gameActive) {
+                    io.to(id).emit('notification', 'Your bed was destroyed! You will not respawn!');
+                }
             }
         });
     }
@@ -169,12 +176,10 @@ function startRoundTimer() {
             const activePlayers = getActivePlayers();
             if (activePlayers.length > 0) {
                 const winnerId = activePlayers[0].id || Array.from(players.entries()).find(([id, p]) => !p.spectator)[0];
-                io.emit('gameEnd', { winner: winnerId });
+                endGame(winnerId);
             } else {
-                io.emit('gameEnd', { winner: null });
+                endGame(null);
             }
-            
-            setTimeout(resetGame, 5000);
         }
     }, 1000);
 }
@@ -209,6 +214,7 @@ function initWorld() {
     pickups.clear();
     spawners.length = 0;
     enderpearls.clear();
+    fireballs.clear();
     
     // Create iron islands
     ironIslands.forEach(island => {
@@ -262,10 +268,52 @@ function assignPlayerToIsland(playerId) {
     return null;
 }
 
+function endGame(winnerId) {
+    if (!gameActive) return;
+    
+    gameActive = false;
+    suddenDeath = false;
+    roundStartTime = null;
+    stopRoundTimer();
+    
+    console.log(`Game ended! Winner: ${winnerId || 'No winner'}`);
+    
+    // Announce winner
+    io.emit('gameEnd', { winner: winnerId });
+    
+    // Reset game after delay
+    setTimeout(() => {
+        resetGame();
+    }, 5000);
+}
+
+function checkWinCondition() {
+    if (!gameActive) return;
+    
+    const activePlayers = getActivePlayers();
+    console.log(`Checking win condition. Active players: ${activePlayers.length}`);
+    
+    if (activePlayers.length <= 1) {
+        let winnerId = null;
+        if (activePlayers.length === 1) {
+            winnerId = activePlayers[0].id;
+            console.log(`Win condition met! Winner: ${winnerId}`);
+        } else {
+            console.log('Win condition met! No winner.');
+        }
+        
+        endGame(winnerId);
+        return true;
+    }
+    return false;
+}
+
 // New function to properly eliminate a player
 function eliminatePlayer(playerId, eliminatorId) {
     const p = players.get(playerId);
     if (!p) return;
+    
+    console.log(`Eliminating player ${playerId}. Eliminator: ${eliminatorId}`);
     
     p.spectator = true;
     p.health = PLAYER_MAX_HEALTH;
@@ -300,25 +348,10 @@ function eliminatePlayer(playerId, eliminatorId) {
     });
     
     // Remove player body for all other players
-    socket.broadcast.emit('removePlayer', playerId);
+    io.emit('removePlayer', playerId);
     
-    // Check if game should end (only if there's 1 or fewer active players left)
-    const activePlayers = getActivePlayers();
-    console.log(`Active players after elimination: ${activePlayers.length}`);
-    
-    if (activePlayers.length <= 1) {
-        gameActive = false;
-        let winnerId = null;
-        if (activePlayers.length === 1) {
-            winnerId = activePlayers[0].id;
-            console.log(`Game over! Winner: ${winnerId}`);
-        } else {
-            console.log('Game over! No winner.');
-        }
-        io.emit('gameEnd', { winner: winnerId });
-        stopRoundTimer();
-        setTimeout(resetGame, 5000);
-    }
+    // Check win condition
+    checkWinCondition();
 }
 
 function resetGame() {
@@ -347,6 +380,7 @@ function resetGame() {
         p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
         p.equippedWeapon = null;
         p.lastEnderpearlThrow = 0;
+        p.lastFireballThrow = 0;
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -478,7 +512,8 @@ io.on('connection', (socket) => {
         id: socket.id,
         lastHitTime: 0,
         equippedWeapon: null,
-        lastEnderpearlThrow: 0
+        lastEnderpearlThrow: 0,
+        lastFireballThrow: 0
     };
     
     players.set(socket.id, playerState);
@@ -806,7 +841,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Enderpearl throwing - UPDATED VERSION
+    // Enderpearl throwing
     socket.on('throwEnderpearl', (targetPos) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -886,6 +921,86 @@ io.on('connection', (socket) => {
         });
     });
 
+    // Fireball throwing
+    socket.on('throwFireball', (targetPos) => {
+        const p = players.get(socket.id);
+        if (p.spectator) return;
+        
+        const slot = p.inventory[p.selected];
+        if (!slot || slot.type !== 'Fireball' || slot.count < 1) {
+            socket.emit('notification', 'No Fireball in selected slot!');
+            return;
+        }
+        
+        // Check server-side cooldown (2 seconds = 2000ms)
+        const now = Date.now();
+        if (now - p.lastFireballThrow < 2000) {
+            socket.emit('notification', 'Fireball cooldown!');
+            return;
+        }
+        
+        // Reduce count
+        slot.count--;
+        if (slot.count === 0) {
+            p.inventory[p.selected] = null;
+        }
+        
+        p.lastFireballThrow = now;
+        
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        
+        // Create fireball projectile
+        const fireballId = `fireball-${socket.id}-${now}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Start from player's eye position
+        const startPos = {
+            x: p.pos.x,
+            y: p.pos.y + (p.crouch ? 1.3 : 1.6),
+            z: p.pos.z
+        };
+        
+        // Get throw direction from targetPos
+        const direction = {
+            x: targetPos.x - startPos.x,
+            y: targetPos.y - startPos.y,
+            z: targetPos.z - startPos.z
+        };
+        
+        // Normalize and set velocity (speed: 20 blocks per second)
+        const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        const speed = 20;
+        const velocity = {
+            x: (direction.x / length) * speed,
+            y: (direction.y / length) * speed,
+            z: (direction.z / length) * speed
+        };
+        
+        const fireball = {
+            id: fireballId,
+            owner: socket.id,
+            pos: startPos,
+            velocity: velocity,
+            createdAt: now,
+            lastUpdate: now,
+            arrived: false,
+            hit: false
+        };
+        
+        fireballs.set(fireballId, fireball);
+        
+        console.log(`Fireball thrown by ${socket.id}, ID: ${fireballId}`);
+        
+        // Send fireball to all clients
+        io.emit('addFireball', {
+            id: fireball.id,
+            x: startPos.x,
+            y: startPos.y,
+            z: startPos.z,
+            velocity: velocity,
+            owner: socket.id
+        });
+    });
+
     socket.on('disconnect', () => {
         console.log(`Disconnected: ${socket.id}`);
         
@@ -921,17 +1036,7 @@ io.on('connection', (socket) => {
                 console.log(`Active players after disconnect: ${activePlayers.length}`);
                 
                 if (activePlayers.length <= 1) {
-                    gameActive = false;
-                    let winnerId = null;
-                    if (activePlayers.length === 1) {
-                        winnerId = activePlayers[0].id;
-                        console.log(`Game over! Winner: ${winnerId}`);
-                    } else {
-                        console.log('Game over! No winner.');
-                    }
-                    io.emit('gameEnd', { winner: winnerId });
-                    stopRoundTimer();
-                    setTimeout(resetGame, 5000);
+                    endGame(activePlayers.length === 1 ? activePlayers[0].id : null);
                 }
             } else {
                 // If not in a match or spectator, just remove the player
@@ -1074,6 +1179,105 @@ setInterval(() => {
             console.log(`Enderpearl ${id} removed (hit or timeout)`);
         });
 
+        // Fireball physics
+        const fireballUpdates = [];
+        const fireballRemovals = [];
+        
+        fireballs.forEach((fireball, id) => {
+            if (fireball.arrived || fireball.hit) return;
+            
+            const deltaTime = (now - fireball.lastUpdate) / 1000; // in seconds
+            fireball.lastUpdate = now;
+            
+            // Apply gravity (less gravity than enderpearl for more direct trajectory)
+            const GRAVITY = 10;
+            fireball.velocity.y -= GRAVITY * deltaTime;
+            
+            // Update position
+            fireball.pos.x += fireball.velocity.x * deltaTime;
+            fireball.pos.y += fireball.velocity.y * deltaTime;
+            fireball.pos.z += fireball.velocity.z * deltaTime;
+            
+            // Check if hit a block
+            const blockX = Math.floor(fireball.pos.x);
+            const blockY = Math.floor(fireball.pos.y);
+            const blockZ = Math.floor(fireball.pos.z);
+            const blockKeyStr = blockKey(blockX, blockY, blockZ);
+            
+            if (blocks.has(blockKeyStr) && now - fireball.createdAt > 200) {
+                // Hit a block - destroy blocks in 3x3x3 area
+                fireball.hit = true;
+                
+                // Destroy blocks in a 3x3x3 area centered on the hit block
+                const blocksDestroyed = [];
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dz = -1; dz <= 1; dz++) {
+                            const x = blockX + dx;
+                            const y = blockY + dy;
+                            const z = blockZ + dz;
+                            const key = blockKey(x, y, z);
+                            
+                            // Check if block exists and is not a bed (protect beds from fireball)
+                            if (blocks.has(key)) {
+                                const blockType = blocks.get(key);
+                                
+                                // Don't destroy beds with fireballs
+                                if (blockType === 'Bed') {
+                                    // Check if it's the player's own bed
+                                    const player = players.get(fireball.owner);
+                                    if (player && player.bedPos && 
+                                        player.bedPos.x === x && 
+                                        player.bedPos.y === y && 
+                                        player.bedPos.z === z) {
+                                        continue; // Don't destroy own bed
+                                    }
+                                }
+                                
+                                removeBlock(x, y, z);
+                                blocksDestroyed.push({ x, y, z, type: blockType });
+                            }
+                        }
+                    }
+                }
+                
+                // Send explosion effect and block removals to clients
+                io.emit('fireballExplosion', {
+                    x: blockX,
+                    y: blockY,
+                    z: blockZ,
+                    blocksDestroyed: blocksDestroyed
+                });
+                
+                // Mark for removal
+                fireball.arrived = true;
+                fireballRemovals.push(id);
+            } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
+                // Fell into void or timeout (10 seconds)
+                fireball.arrived = true;
+                fireballRemovals.push(id);
+            } else {
+                // Still in flight
+                fireballUpdates.push({
+                    id: fireball.id,
+                    x: fireball.pos.x,
+                    y: fireball.pos.y,
+                    z: fireball.pos.z
+                });
+            }
+        });
+        
+        // Send updates to clients
+        if (fireballUpdates.length > 0) {
+            io.emit('updateFireball', fireballUpdates);
+        }
+        
+        // Remove fireballs that have hit or timed out
+        fireballRemovals.forEach(id => {
+            fireballs.delete(id);
+            io.emit('removeFireball', id);
+        });
+
         // Check for death/respawn (for falling into void)
         players.forEach((p, id) => {
             if (p.spectator) return;
@@ -1097,6 +1301,11 @@ setInterval(() => {
                 p.lastRespawn = now;
             }
         });
+        
+        // Periodically check win condition (in case something was missed)
+        if (Math.random() < 0.1) { // 10% chance per game loop iteration
+            checkWinCondition();
+        }
     }
 
     // Sync players (20 FPS) with health and equipped weapon information
