@@ -474,7 +474,7 @@
         // Crouching state
         let isCrouching = false;
 
-        // Sword in hand
+        // Sword in hand - KEEP BUT HIDE
         let swordInHand = null;
 
         let playerId = null;
@@ -605,7 +605,7 @@
                     document.getElementById('timer').style.display = 'block';
                 }
                 
-                // Update sword in hand
+                // Update sword in hand - DON'T SHOW FOR LOCAL PLAYER
                 updateSwordInHand();
                 
                 if (isFullscreen() && !controls.isLocked && !isShopOpen()) {
@@ -1033,6 +1033,11 @@
 
         // --- Sword Functions ---
         function createSwordMesh(type, playerId = null) {
+            // If this is for the local player, don't create it (hide swords)
+            if (!playerId) {
+                return null;
+            }
+            
             let texture = null;
             if (type === 'Wooden Sword' && woodenSwordTexture) texture = woodenSwordTexture;
             else if (type === 'Iron Sword' && ironSwordTexture) texture = ironSwordTexture;
@@ -1065,14 +1070,15 @@
             // Check if current slot has a sword
             const currentSlot = inventory[selectedSlotIndex];
             if (currentSlot && currentSlot.type && BLOCK_TYPES[currentSlot.type] && BLOCK_TYPES[currentSlot.type].isWeapon) {
-                swordInHand = createSwordMesh(currentSlot.type);
-                if (swordInHand) {
-                    // Position sword in view - MADE BIGGER
-                    swordInHand.position.set(-0.4, -0.3, -0.5);
-                    // Increased scale from 0.6 to 1.0
-                    swordInHand.scale.set(1.0, 1.0, 1);
-                    scene.add(swordInHand);
-                }
+                // Don't create sword for local player (hide it)
+                // swordInHand = createSwordMesh(currentSlot.type);
+                // if (swordInHand) {
+                //     // Position sword in view - MADE BIGGER
+                //     swordInHand.position.set(-0.4, -0.3, -0.5);
+                //     // Increased scale from 0.6 to 1.0
+                //     swordInHand.scale.set(1.0, 1.0, 1);
+                //     scene.add(swordInHand);
+                // }
             }
         }
 
@@ -1826,7 +1832,7 @@
                 }
             });
 
-            // Update fireball animations - REMOVED SPINNING AND PULSING
+            // Update fireball animations - WITH BLOCK COLLISION DETECTION
             fireballProjectiles.forEach((fireball, id) => {
                 const userData = fireball.userData;
                 if (!userData || !userData.velocity) return;
@@ -1836,7 +1842,7 @@
                 
                 if (deltaTime > 0) {
                     // Store last position for interpolation
-                    userData.lastPos = {
+                    const lastPos = {
                         x: fireball.position.x,
                         y: fireball.position.y,
                         z: fireball.position.z
@@ -1853,16 +1859,8 @@
                     
                     userData.lastUpdate = now;
                     
-                    // Make the fireball face the camera - NO SPINNING
+                    // Make the fireball face the camera
                     fireball.lookAt(camera.position);
-                    
-                    // REMOVED: Spinning effect
-                    // fireball.material.rotation += 0.2;
-                    // fireball.material.needsUpdate = true;
-                    
-                    // REMOVED: Pulsing effect - fixed scale only
-                    // const pulse = 0.15 * Math.sin(now / 150);
-                    // fireball.scale.set(0.8 + pulse, 0.8 + pulse, 1);
                     
                     // Fixed scale only - no changes in size
                     fireball.scale.set(0.8, 0.8, 1);
@@ -1870,27 +1868,50 @@
                     // Fixed opacity at 1.0
                     fireball.material.opacity = 1.0;
                     fireball.material.needsUpdate = true;
+                    
+                    // NEW: Check for block collisions using raycasting
+                    const currentPos = fireball.position.clone();
+                    const direction = new THREE.Vector3().subVectors(currentPos, lastPos);
+                    const distance = direction.length();
+                    
+                    if (distance > 0) {
+                        direction.normalize();
+                        
+                        // Create a raycaster to check for blocks along the fireball's path
+                        const tempRaycaster = new THREE.Raycaster();
+                        tempRaycaster.set(lastPos, direction);
+                        
+                        // Check for intersections with blocks
+                        const intersects = tempRaycaster.intersectObjects(blocksInScene);
+                        
+                        if (intersects.length > 0) {
+                            const intersect = intersects[0];
+                            // Only trigger if the intersection is within the distance traveled
+                            if (intersect.distance <= distance) {
+                                // Fireball hit a block - send explosion to server
+                                const hitBlock = intersect.object;
+                                const blockX = Math.floor(hitBlock.position.x - 0.5);
+                                const blockY = Math.floor(hitBlock.position.y - 0.5);
+                                const blockZ = Math.floor(hitBlock.position.z - 0.5);
+                                
+                                // Notify server about fireball hitting block
+                                socket.emit('fireballHitBlock', {
+                                    fireballId: id,
+                                    x: blockX,
+                                    y: blockY,
+                                    z: blockZ
+                                });
+                                
+                                // Create client-side explosion effect immediately
+                                createFireballExplosion(blockX, blockY, blockZ);
+                                
+                                // Remove the fireball mesh
+                                removeFireballMesh(id);
+                            }
+                        }
+                    }
                 }
             });
-
-            // Update sword in hand position (bobbing animation)
-            if (swordInHand) {
-                swordBobTime += delta;
-                const bobAmount = 0.02;
-                const bobSpeed = 5;
-                
-                const bobOffset = Math.sin(swordBobTime * bobSpeed) * bobAmount;
-                
-                // Position in lower right corner with bobbing
-                swordInHand.position.set(-0.4, -0.3 + bobOffset, -0.5);
-                
-                // Make sword face camera (billboard effect)
-                swordInHand.lookAt(camera.position);
-                
-                // Add slight rotation to make it look more natural
-                swordInHand.rotation.x = -0.2;
-                swordInHand.rotation.z = Math.PI / 6;
-            }
 
             // Always apply physics for non-spectator players, even when controls aren't locked
             if (!isSpectator) {
