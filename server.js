@@ -41,7 +41,8 @@ const spawners = [];
 const players = new Map();
 const enderpearls = new Map();
 const fireballs = new Map();
-const breakingAnimations = new Map(); // NEW: Track breaking animations per player
+const breakingAnimations = new Map();
+const activeBreaking = new Map(); // NEW: Track active breaking sessions
 
 let gameActive = false;
 let countdownTimer = null;
@@ -217,7 +218,8 @@ function initWorld() {
     spawners.length = 0;
     enderpearls.clear();
     fireballs.clear();
-    breakingAnimations.clear(); // NEW: Clear breaking animations
+    breakingAnimations.clear();
+    activeBreaking.clear(); // Clear active breaking sessions
     
     // Create iron islands
     ironIslands.forEach(island => {
@@ -496,6 +498,63 @@ function startPlayerCheck() {
     }, 1000);
 }
 
+// NEW: Function to validate block breaking
+function validateBlockBreaking(playerId, x, y, z, type) {
+    const p = players.get(playerId);
+    if (!p || p.spectator) return false;
+    
+    const key = blockKey(x, y, z);
+    if (!blocks.has(key)) return false;
+    
+    const blockType = blocks.get(key);
+    if (blockType !== type) return false;
+    
+    // Check distance (5.5 blocks maximum)
+    const eyeHeight = p.crouch ? 1.3 : 1.6;
+    const playerEyeY = p.pos.y - eyeHeight;
+    const blockCenterY = y + 0.5;
+    
+    const dist = Math.hypot(
+        p.pos.x - (x + 0.5),
+        playerEyeY - blockCenterY,
+        p.pos.z - (z + 0.5)
+    );
+    
+    return dist <= 5.5;
+}
+
+// NEW: Function to process block breaking
+function processBlockBreak(playerId, x, y, z) {
+    const p = players.get(playerId);
+    if (!p || p.spectator) return false;
+    
+    const key = blockKey(x, y, z);
+    if (!blocks.has(key)) return false;
+    
+    const type = blocks.get(key);
+    
+    // Check if it's a bed
+    if (type === 'Bed') {
+        // Check if it's the player's own bed
+        if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
+            return false; // Can't break own bed
+        }
+        
+        // Remove bed
+        removeBlock(x, y, z);
+        return true;
+    }
+    
+    // For regular blocks, add to inventory
+    if (addToInventory(p.inventory, type, 1)) {
+        removeBlock(x, y, z);
+        io.to(playerId).emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        return true;
+    }
+    
+    return false;
+}
+
 // Socket connections
 io.on('connection', (socket) => {
     console.log(`New connection: ${socket.id}`);
@@ -614,6 +673,7 @@ io.on('connection', (socket) => {
         socket.emit('updateCurrency', { ...p.currency });
     });
 
+    // FIXED: Server-side block breaking
     socket.on('breakAttempt', ({ x, y, z }) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -626,55 +686,18 @@ io.on('connection', (socket) => {
         
         const type = blocks.get(key);
         
-        if (type === 'Bed') {
-            // Check if it's the player's own bed
-            if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
-                socket.emit('notification', 'You cannot break your own bed!');
-                socket.emit('revertBreak', { x, y, z, type: 'Bed' });
-                return;
-            }
-            
-            // Check distance for bed breaking (same as other blocks)
-            const eyeHeight = p.crouch ? 1.3 : 1.6;
-            const playerEyeY = p.pos.y - eyeHeight;
-            const blockCenterY = y + 0.5;
-            
-            const dist = Math.hypot(
-                p.pos.x - (x + 0.5),
-                playerEyeY - blockCenterY,
-                p.pos.z - (z + 0.5)
-            );
-            
-            if (dist > 5.5) {
-                socket.emit('revertBreak', { x, y, z, type: 'Bed' });
-                socket.emit('notification', 'Too far away!');
-                return;
-            }
-            
-            removeBlock(x, y, z);
-            return;
-        }
-        
-        const eyeHeight = p.crouch ? 1.3 : 1.6;
-        const playerEyeY = p.pos.y - eyeHeight;
-        const blockCenterY = y + 0.5;
-        
-        const dist = Math.hypot(
-            p.pos.x - (x + 0.5),
-            playerEyeY - blockCenterY,
-            p.pos.z - (z + 0.5)
-        );
-        
-        if (dist > 5.5) {
+        // Validate the break
+        if (!validateBlockBreaking(socket.id, x, y, z, type)) {
             socket.emit('revertBreak', { x, y, z, type });
-            socket.emit('notification', 'Too far away!');
             return;
         }
         
-        if (addToInventory(p.inventory, type, 1)) {
-            removeBlock(x, y, z);
-            socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        // Process the break
+        if (processBlockBreak(socket.id, x, y, z)) {
+            // Success - block already removed by processBlockBreak
+            return;
         } else {
+            // Failed - revert
             socket.emit('revertBreak', { x, y, z, type });
         }
     });
