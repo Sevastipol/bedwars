@@ -15,17 +15,17 @@ server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // Config
 const BLOCK_TYPES = {
-    'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true, category: 'blocks' },
-    'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6, category: 'blocks' },
-    'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true, category: 'blocks' },
-    'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true, category: 'blocks' },
-    'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true, category: 'blocks' },
-    'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false, category: 'blocks' },
-    'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true, category: 'misc' },
-    'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true, category: 'misc' },
-    'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true, category: 'weapons' },
-    'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true, category: 'weapons' },
-    'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true, category: 'weapons' }
+    'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true },
+    'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6 },
+    'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
+    'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
+    'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
+    'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
+    'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
+    'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
+    'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
+    'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
+    'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true }
 };
 const MAX_STACK = 64;
 const INVENTORY_SIZE = 9;
@@ -33,8 +33,6 @@ const BED_DESTRUCTION_TIME = 10 * 60 * 1000;
 const ROUND_DURATION = 15 * 60 * 1000;
 const REQUIRED_PLAYERS = 2;
 const PLAYER_MAX_HEALTH = 10;
-const HEALTH_REGEN_DELAY = 10000; // 10 seconds
-const HEALTH_REGEN_RATE = 1000; // 1 second per heart
 
 // State
 const blocks = new Map();
@@ -52,7 +50,6 @@ let roundStartTime = null;
 let suddenDeath = false;
 let roundTimerInterval = null;
 let playerCheckInterval = null;
-let healthRegenInterval = null;
 
 // Iron island positions
 const ironIslands = [
@@ -195,37 +192,6 @@ function stopRoundTimer() {
     }
 }
 
-function startHealthRegeneration() {
-    if (healthRegenInterval) {
-        clearInterval(healthRegenInterval);
-    }
-    
-    healthRegenInterval = setInterval(() => {
-        const now = Date.now();
-        players.forEach((p, id) => {
-            if (!p.spectator && p.health < PLAYER_MAX_HEALTH) {
-                if (now - p.lastDamageTime >= HEALTH_REGEN_DELAY) {
-                    p.health = Math.min(PLAYER_MAX_HEALTH, p.health + 1);
-                    io.emit('healthRegenerated', {
-                        playerId: id,
-                        newHealth: p.health
-                    });
-                    
-                    // Update player's last damage time to prevent rapid regeneration
-                    p.lastDamageTime = now - HEALTH_REGEN_DELAY + HEALTH_REGEN_RATE;
-                }
-            }
-        });
-    }, HEALTH_REGEN_RATE);
-}
-
-function stopHealthRegeneration() {
-    if (healthRegenInterval) {
-        clearInterval(healthRegenInterval);
-        healthRegenInterval = null;
-    }
-}
-
 function createIsland(offsetX, offsetZ, spawnerType = null) {
     for (let x = 0; x < 6; x++) {
         for (let z = 0; z < 6; z++) {
@@ -282,7 +248,6 @@ function assignPlayerToIsland(playerId) {
             p.rot = { yaw: 0, pitch: 0 };
             p.spectator = false;
             p.health = PLAYER_MAX_HEALTH;
-            p.lastDamageTime = 0;
             
             return {
                 bedPos: p.bedPos,
@@ -303,7 +268,6 @@ function endGame(winnerId) {
     suddenDeath = false;
     roundStartTime = null;
     stopRoundTimer();
-    stopHealthRegeneration();
     
     console.log(`Game ended! Winner: ${winnerId || 'No winner'}`);
     
@@ -343,7 +307,6 @@ function eliminatePlayer(playerId, eliminatorId) {
     
     p.spectator = true;
     p.health = PLAYER_MAX_HEALTH;
-    p.lastDamageTime = 0;
     p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
     
     if (p.bedPos) {
@@ -399,7 +362,6 @@ function resetGame() {
         p.bedPos = null;
         p.spectator = true;
         p.health = PLAYER_MAX_HEALTH;
-        p.lastDamageTime = 0;
         p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
         p.equippedWeapon = null;
         p.lastEnderpearlThrow = 0;
@@ -429,7 +391,6 @@ function resetGame() {
     suddenDeath = false;
     roundStartTime = null;
     stopRoundTimer();
-    stopHealthRegeneration();
     
     startPlayerCheck();
 }
@@ -469,7 +430,6 @@ function startPlayerCheck() {
                                     p.rot = assignment.rot;
                                     p.bedPos = assignment.bedPos;
                                     p.health = PLAYER_MAX_HEALTH;
-                                    p.lastDamageTime = 0;
                                     assignedPlayers.push(id);
                                     
                                     io.to(id).emit('assignBed', assignment);
@@ -486,7 +446,6 @@ function startPlayerCheck() {
                             spawners.forEach(s => s.lastSpawn = Date.now());
                             
                             startRoundTimer();
-                            startHealthRegeneration();
                             
                             io.emit('gameStart');
                         } else {
@@ -545,14 +504,6 @@ function processBlockBreak(playerId, x, y, z) {
         }
         
         removeBlock(x, y, z);
-        
-        // Find player who owns this bed
-        players.forEach((player, pid) => {
-            if (player.bedPos && player.bedPos.x === x && player.bedPos.y === y && player.bedPos.z === z) {
-                io.to(pid).emit('notification', 'Your bed was destroyed!');
-            }
-        });
-        
         return true;
     }
     
@@ -580,7 +531,6 @@ io.on('connection', (socket) => {
         lastRespawn: 0,
         spectator: true,
         health: PLAYER_MAX_HEALTH,
-        lastDamageTime: 0,
         id: socket.id,
         lastHitTime: 0,
         equippedWeapon: null,
@@ -651,9 +601,6 @@ io.on('connection', (socket) => {
             p.selected = data.selected;
             p.spectator = data.spectator;
             p.equippedWeapon = data.equippedWeapon;
-            if (data.health !== undefined) {
-                p.health = data.health;
-            }
         }
     });
 
@@ -811,7 +758,6 @@ io.on('connection', (socket) => {
         }
         
         target.health -= damage;
-        target.lastDamageTime = now;
         attacker.lastHitTime = now;
         
         const knockback = 0.5;
@@ -824,8 +770,7 @@ io.on('connection', (socket) => {
         io.emit('playerHit', {
             attackerId: attacker.id,
             targetId: target.id,
-            newHealth: target.health,
-            damage: damage
+            newHealth: target.health
         });
         
         if (target.health <= 0) {
@@ -834,7 +779,6 @@ io.on('connection', (socket) => {
             
             if (hasBed) {
                 target.health = PLAYER_MAX_HEALTH;
-                target.lastDamageTime = 0;
                 target.pos.x = target.bedPos.x + 0.5;
                 target.pos.y = target.bedPos.y + 2;
                 target.pos.z = target.bedPos.z + 0.5;
@@ -849,8 +793,7 @@ io.on('connection', (socket) => {
                 io.emit('playerHit', {
                     attackerId: null,
                     targetId: target.id,
-                    newHealth: target.health,
-                    damage: 0
+                    newHealth: target.health
                 });
                 
                 io.to(targetId).emit('notification', 'You died and respawned at your bed!');
@@ -1126,13 +1069,8 @@ io.on('connection', (socket) => {
                 const activePlayers = getActivePlayers();
                 console.log(`Active players after disconnect: ${activePlayers.length}`);
                 
-                // NEW: Reset map if there are less than 2 players
-                if (activePlayers.length < 2) {
-                    console.log(`Less than 2 players left (${activePlayers.length}), resetting game...`);
-                    resetGame();
-                } else {
-                    // Only check win condition if we have enough players
-                    checkWinCondition();
+                if (activePlayers.length <= 1) {
+                    endGame(activePlayers.length === 1 ? activePlayers[0].id : null);
                 }
             } else {
                 players.delete(socket.id);
@@ -1293,52 +1231,8 @@ setInterval(() => {
             
             if (distance > 0) {
                 const steps = Math.ceil(distance * 2);
-                let hitPlayer = null;
+                let hitBlock = null;
                 
-                // Check for player collision first
-                players.forEach((p, playerId) => {
-                    if (p.spectator || playerId === fireball.owner) return;
-                    
-                    const playerDist = Math.hypot(
-                        fireball.pos.x - p.pos.x,
-                        fireball.pos.y - (p.pos.y - 1.6),
-                        fireball.pos.z - p.pos.z
-                    );
-                    
-                    if (playerDist < 2.0) {
-                        hitPlayer = { id: playerId, player: p };
-                    }
-                });
-                
-                if (hitPlayer) {
-                    // Direct fireball hit - deal 6 hearts of damage
-                    hitPlayer.player.health -= 6;
-                    hitPlayer.player.lastDamageTime = now;
-                    
-                    if (hitPlayer.player.health <= 0) {
-                        eliminatePlayer(hitPlayer.id, fireball.owner);
-                    } else {
-                        io.emit('fireballHitPlayer', {
-                            attackerId: fireball.owner,
-                            targetId: hitPlayer.id,
-                            newHealth: hitPlayer.player.health
-                        });
-                    }
-                    
-                    // Emit explosion for visual effect
-                    io.emit('fireballExplosion', {
-                        x: Math.floor(fireball.pos.x),
-                        y: Math.floor(fireball.pos.y),
-                        z: Math.floor(fireball.pos.z),
-                        blocksDestroyed: []
-                    });
-                    
-                    fireball.hit = true;
-                    fireballRemovals.push(id);
-                    return;
-                }
-                
-                // Check for block collision
                 for (let i = 0; i <= steps; i++) {
                     const t = i / steps;
                     const checkX = prevPos.x + dx * t;
@@ -1351,54 +1245,56 @@ setInterval(() => {
                     const blockKeyStr = blockKey(blockX, blockY, blockZ);
                     
                     if (blocks.has(blockKeyStr)) {
-                        fireball.hit = true;
-                        
-                        const blocksDestroyed = [];
-                        for (let dx = -1; dx <= 1; dx++) {
-                            for (let dy = -1; dy <= 1; dy++) {
-                                for (let dz = -1; dz <= 1; dz++) {
-                                    const x = blockX + dx;
-                                    const y = blockY + dy;
-                                    const z = blockZ + dz;
-                                    const key = blockKey(x, y, z);
-                                    
-                                    if (blocks.has(key)) {
-                                        const blockType = blocks.get(key);
-                                        
-                                        if (blockType === 'Bed') {
-                                            const player = players.get(fireball.owner);
-                                            if (player && player.bedPos && 
-                                                player.bedPos.x === x && 
-                                                player.bedPos.y === y && 
-                                                player.bedPos.z === z) {
-                                                continue;
-                                            }
-                                        }
-                                        
-                                        removeBlock(x, y, z);
-                                        blocksDestroyed.push({ x, y, z, type: blockType });
-                                    }
-                                }
-                            }
-                        }
-                        
-                        io.emit('fireballExplosion', {
-                            x: blockX,
-                            y: blockY,
-                            z: blockZ,
-                            blocksDestroyed: blocksDestroyed
-                        });
-                        
-                        fireball.arrived = true;
-                        fireballRemovals.push(id);
+                        hitBlock = { x: blockX, y: blockY, z: blockZ };
                         break;
                     }
                 }
                 
-                if (!fireball.hit && (fireball.pos.y < -30 || now - fireball.createdAt > 10000)) {
+                if (hitBlock) {
+                    fireball.hit = true;
+                    
+                    const blocksDestroyed = [];
+                    for (let dx = -1; dx <= 1; dx++) {
+                        for (let dy = -1; dy <= 1; dy++) {
+                            for (let dz = -1; dz <= 1; dz++) {
+                                const x = hitBlock.x + dx;
+                                const y = hitBlock.y + dy;
+                                const z = hitBlock.z + dz;
+                                const key = blockKey(x, y, z);
+                                
+                                if (blocks.has(key)) {
+                                    const blockType = blocks.get(key);
+                                    
+                                    if (blockType === 'Bed') {
+                                        const player = players.get(fireball.owner);
+                                        if (player && player.bedPos && 
+                                            player.bedPos.x === x && 
+                                            player.bedPos.y === y && 
+                                            player.bedPos.z === z) {
+                                            continue;
+                                        }
+                                    }
+                                    
+                                    removeBlock(x, y, z);
+                                    blocksDestroyed.push({ x, y, z, type: blockType });
+                                }
+                            }
+                        }
+                    }
+                    
+                    io.emit('fireballExplosion', {
+                        x: hitBlock.x,
+                        y: hitBlock.y,
+                        z: hitBlock.z,
+                        blocksDestroyed: blocksDestroyed
+                    });
+                    
                     fireball.arrived = true;
                     fireballRemovals.push(id);
-                } else if (!fireball.hit) {
+                } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
+                    fireball.arrived = true;
+                    fireballRemovals.push(id);
+                } else {
                     fireballUpdates.push({
                         id: fireball.id,
                         x: fireball.pos.x,
