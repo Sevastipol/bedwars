@@ -385,8 +385,10 @@
         B: Shop | ESC: Unlock Mouse<br>
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span><br>
+        <span style="color: #ff8888">Q: Drop Item</span><br>
         <span style="color: #88aaff">Right-Click with Enderpearl: Throw</span><br>
         <span style="color: #ffaa00">Right-Click with Fireball: Throw (Destroys blocks)</span><br>
+        <span style="color: #88ccff">Right-Click with Wind Charge: Throw (Knocks back players)</span><br>
         <span style="color: #ff88ff">Click on Players: Attack</span>
     </div>
     <div id="break-progress">
@@ -431,6 +433,7 @@
         let wasBuying = false;
         let lastEnderpearlThrow = 0;
         let lastFireballThrow = 0;
+        let lastWindchargeThrow = 0;
 
         // --- Screen Shake Variables ---
         let screenShakeIntensity = 0;
@@ -449,6 +452,7 @@
             'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
             'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
             'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Wind Charge': { color: 0x88ccff, cost: { gold: 24 }, buyAmount: 1, isItem: true, hasTexture: true },
             'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
             'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
             'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true },
@@ -469,6 +473,7 @@
         const resourcePickups = [];
         const projectiles = new Map();
         const fireballProjectiles = new Map();
+        const windchargeProjectiles = new Map();
         
         // Breaking overlays for other players
         const breakingOverlays = new Map();
@@ -710,6 +715,7 @@
         let emeraldTexture = null;
         let enderpearlTexture = null;
         let fireballTexture = null;
+        let windchargeTexture = null;
         let woodenSwordTexture = null;
         let ironSwordTexture = null;
         let emeraldSwordTexture = null;
@@ -728,6 +734,7 @@
             emerald: 'https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png',
             enderpearl: 'https://i.ibb.co/TBmwYFGG/pixil-frame-0-9.png',
             fireball: 'https://i.ibb.co/Kc4xPxSJ/pixilart-drawing-9.png',
+            windcharge: 'https://i.ibb.co/TMm9YgXR/pixilart-drawing-11.png',
             woodenSword: 'https://i.ibb.co/mLZmwsJ/pixil-frame-0-10.png',
             ironSword: 'https://i.ibb.co/F4NZLPzj/pixil-frame-0-11.png',
             emeraldSword: 'https://i.ibb.co/przKkdMP/pixil-frame-0-12.png',
@@ -796,6 +803,12 @@
             texture.magFilter = THREE.NearestFilter;
             texture.minFilter = THREE.NearestFilter;
             fireballTexture = texture;
+        });
+
+        textureLoader.load(TEXTURE_URLS.windcharge, (texture) => {
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            windchargeTexture = texture;
         });
 
         textureLoader.load(TEXTURE_URLS.woodenSword, (texture) => {
@@ -1032,6 +1045,136 @@
                 if (fireball.material) fireball.material.dispose();
                 fireballProjectiles.delete(id);
             }
+        }
+
+        // --- Wind Charge Functions ---
+        function createWindchargeMesh(data) {
+            let material;
+            if (windchargeTexture) {
+                material = new THREE.SpriteMaterial({ 
+                    map: windchargeTexture,
+                    opacity: 1.0,
+                    transparent: true
+                });
+            } else {
+                material = new THREE.SpriteMaterial({ 
+                    color: 0x88ccff,
+                    opacity: 1.0,
+                    transparent: true
+                });
+            }
+            
+            const windcharge = new THREE.Sprite(material);
+            windcharge.position.set(data.x, data.y, data.z);
+            windcharge.scale.set(0.7, 0.7, 1);
+            
+            windcharge.userData = { 
+                id: data.id, 
+                type: 'windcharge',
+                owner: data.owner,
+                velocity: data.velocity,
+                lastUpdate: Date.now(),
+                lastPos: { x: data.x, y: data.y, z: data.z }
+            };
+            
+            scene.add(windcharge);
+            windchargeProjectiles.set(data.id, windcharge);
+            return windcharge;
+        }
+
+        function updateWindchargeMesh(windchargeData) {
+            const windcharge = windchargeProjectiles.get(windchargeData.id);
+            if (windcharge) {
+                if (windcharge.userData.lastPos) {
+                    const lerpFactor = 0.3;
+                    windcharge.position.x = THREE.MathUtils.lerp(
+                        windcharge.position.x,
+                        windchargeData.x,
+                        lerpFactor
+                    );
+                    windcharge.position.y = THREE.MathUtils.lerp(
+                        windcharge.position.y,
+                        windchargeData.y,
+                        lerpFactor
+                    );
+                    windcharge.position.z = THREE.MathUtils.lerp(
+                        windcharge.position.z,
+                        windchargeData.z,
+                        lerpFactor
+                    );
+                } else {
+                    windcharge.position.set(windchargeData.x, windchargeData.y, windchargeData.z);
+                }
+            }
+        }
+
+        function removeWindchargeMesh(id) {
+            const windcharge = windchargeProjectiles.get(id);
+            if (windcharge) {
+                scene.remove(windcharge);
+                if (windcharge.material) windcharge.material.dispose();
+                windchargeProjectiles.delete(id);
+            }
+        }
+
+        // Wind Charge explosion effect
+        function createWindchargeEffect(x, y, z) {
+            const particleCount = 20;
+            const explosionGroup = new THREE.Group();
+            
+            for (let i = 0; i < particleCount; i++) {
+                const geometry = new THREE.SphereGeometry(0.08, 6, 6);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0x88ccff,
+                    transparent: true,
+                    opacity: 0.7
+                });
+                const particle = new THREE.Mesh(geometry, material);
+                
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1 + Math.random() * 2;
+                particle.userData.velocity = {
+                    x: Math.cos(angle) * speed,
+                    y: Math.random() * 0.5,
+                    z: Math.sin(angle) * speed
+                };
+                particle.userData.life = 1.0;
+                particle.userData.decay = 0.08 + Math.random() * 0.04;
+                
+                particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+                explosionGroup.add(particle);
+            }
+            
+            scene.add(explosionGroup);
+            
+            function animateExplosion() {
+                let allDead = true;
+                
+                explosionGroup.children.forEach(particle => {
+                    particle.userData.life -= particle.userData.decay;
+                    
+                    if (particle.userData.life > 0) {
+                        allDead = false;
+                        particle.position.x += particle.userData.velocity.x * 0.1;
+                        particle.position.y += particle.userData.velocity.y * 0.1;
+                        particle.position.z += particle.userData.velocity.z * 0.1;
+                        particle.material.opacity = particle.userData.life;
+                        particle.scale.setScalar(particle.userData.life * 0.5);
+                    }
+                });
+                
+                if (!allDead) {
+                    requestAnimationFrame(animateExplosion);
+                } else {
+                    scene.remove(explosionGroup);
+                    explosionGroup.children.forEach(particle => {
+                        particle.geometry.dispose();
+                        particle.material.dispose();
+                    });
+                }
+            }
+            
+            animateExplosion();
         }
 
         // Fireball explosion effect
@@ -1459,6 +1602,12 @@
             if(e.code === 'KeyB') toggleShop();
             if(document.getElementById('shop').style.display === 'block') return;
 
+            // Q key - Drop item
+            if (e.code === 'KeyQ') {
+                socket.emit('dropItem');
+                return;
+            }
+
             if (e.code.startsWith('Digit') && e.code !== 'Digit0') {
                 const num = parseInt(e.key);
                 if (num >= 1 && num <= 9) {
@@ -1667,6 +1816,29 @@
                     return;
                 }
                 
+                else if (currentSlot && currentSlot.type === 'Wind Charge' && currentSlot.count > 0) {
+                    const now = Date.now();
+                    if (now - lastWindchargeThrow < 100) {
+                        socket.emit('notification', 'Wind Charge cooldown!');
+                        return;
+                    }
+                    
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    direction.applyQuaternion(camera.quaternion);
+                    direction.normalize();
+                    
+                    const throwDistance = 50;
+                    const targetPos = {
+                        x: camera.position.x + direction.x * throwDistance,
+                        y: camera.position.y + direction.y * throwDistance,
+                        z: camera.position.z + direction.z * throwDistance
+                    };
+                    
+                    socket.emit('throwWindcharge', targetPos);
+                    lastWindchargeThrow = now;
+                    return;
+                }
+                
                 const blockIntersects = raycaster.intersectObjects(blocksInScene);
                 if (blockIntersects.length > 0 && currentSlot && currentSlot.count > 0) {
                     const intersect = blockIntersects[0];
@@ -1674,6 +1846,14 @@
                         socket.emit('notification', 'Too far away!');
                         return;
                     }
+                    
+                    // Check if item can be placed
+                    const blockData = BLOCK_TYPES[currentSlot.type];
+                    if (blockData && (blockData.isItem || blockData.isWeapon || blockData.isTool)) {
+                        socket.emit('notification', 'Cannot place items! Use Q to drop them.');
+                        return;
+                    }
+                    
                     const pos = intersect.point.clone().add(intersect.face.normal.multiplyScalar(0.5));
 
                     const currentEyeHeight = isCrouching ? CROUCH_HEIGHT : EYE_HEIGHT;
@@ -1965,6 +2145,68 @@
                 }
             });
 
+            windchargeProjectiles.forEach((windcharge, id) => {
+                const userData = windcharge.userData;
+                if (!userData || !userData.velocity) return;
+                
+                const deltaTime = (now - userData.lastUpdate) / 1000;
+                
+                if (deltaTime > 0) {
+                    const lastPos = {
+                        x: windcharge.position.x,
+                        y: windcharge.position.y,
+                        z: windcharge.position.z
+                    };
+                    
+                    windcharge.position.x += userData.velocity.x * deltaTime;
+                    windcharge.position.y += userData.velocity.y * deltaTime;
+                    windcharge.position.z += userData.velocity.z * deltaTime;
+                    
+                    const GRAVITY = 8;
+                    userData.velocity.y -= GRAVITY * deltaTime;
+                    
+                    userData.lastUpdate = now;
+                    
+                    windcharge.lookAt(camera.position);
+                    
+                    windcharge.scale.set(0.7, 0.7, 1);
+                    
+                    windcharge.material.opacity = 1.0;
+                    windcharge.material.needsUpdate = true;
+                    
+                    const currentPos = windcharge.position.clone();
+                    const direction = new THREE.Vector3().subVectors(currentPos, lastPos);
+                    const distance = direction.length();
+                    
+                    if (distance > 0) {
+                        direction.normalize();
+                        
+                        const tempRaycaster = new THREE.Raycaster();
+                        tempRaycaster.set(lastPos, direction);
+                        
+                        const blockIntersects = tempRaycaster.intersectObjects(blocksInScene);
+                        
+                        if (blockIntersects.length > 0) {
+                            const intersect = blockIntersects[0];
+                            if (intersect.distance <= distance) {
+                                const hitBlock = intersect.object;
+                                const blockX = Math.floor(hitBlock.position.x - 0.5);
+                                const blockY = Math.floor(hitBlock.position.y - 0.5);
+                                const blockZ = Math.floor(hitBlock.position.z - 0.5);
+                                
+                                createWindchargeEffect(blockX, blockY, blockZ);
+                                
+                                removeWindchargeMesh(id);
+                            }
+                        }
+                    }
+                    
+                    // Rotate wind charge
+                    windcharge.material.rotation += 0.15;
+                    windcharge.material.needsUpdate = true;
+                }
+            });
+
             if (!isSpectator) {
                 velocity.y -= 20.0 * delta;
 
@@ -2188,6 +2430,7 @@
                         else if (slot.type === 'Obsidian') icon.src = TEXTURE_URLS.obsidian;
                         else if (slot.type === 'Enderpearl') icon.src = TEXTURE_URLS.enderpearl;
                         else if (slot.type === 'Fireball') icon.src = TEXTURE_URLS.fireball;
+                        else if (slot.type === 'Wind Charge') icon.src = TEXTURE_URLS.windcharge;
                         else if (slot.type === 'Wooden Sword') icon.src = TEXTURE_URLS.woodenSword;
                         else if (slot.type === 'Iron Sword') icon.src = TEXTURE_URLS.ironSword;
                         else if (slot.type === 'Emerald Sword') icon.src = TEXTURE_URLS.emeraldSword;
@@ -2235,6 +2478,7 @@
                 else if (name === 'Glass') imageUrl = '';
                 else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
                 else if (name === 'Fireball') imageUrl = TEXTURE_URLS.fireball;
+                else if (name === 'Wind Charge') imageUrl = TEXTURE_URLS.windcharge;
                 else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
                 else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
                 else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
@@ -2250,6 +2494,12 @@
                     extraInfo = `<br><span style="color:#ff8888; font-size:0.8em;">Damage: ${data.damage}</span>`;
                 } else if (data.isTool) {
                     extraInfo = `<br><span style="color:#88aaff; font-size:0.8em;">Breaks ${data.toolType === 'axe' ? 'Glass & Wood 2x faster' : 'Stone & Obsidian 2x faster'}</span>`;
+                } else if (name === 'Wind Charge') {
+                    extraInfo = `<br><span style="color:#88ccff; font-size:0.8em;">Knocks back players 4 blocks</span>`;
+                } else if (name === 'Fireball') {
+                    extraInfo = `<br><span style="color:#ffaa00; font-size:0.8em;">Destroys blocks on impact</span>`;
+                } else if (name === 'Enderpearl') {
+                    extraInfo = `<br><span style="color:#88ff88; font-size:0.8em;">Teleports you to impact point</span>`;
                 }
                 
                 item.innerHTML = `
@@ -2604,6 +2854,35 @@
             }
         });
 
+        // Wind Charge events
+        socket.on('addWindcharge', (data) => {
+            createWindchargeMesh(data);
+        });
+
+        socket.on('updateWindcharge', (data) => {
+            if (Array.isArray(data)) {
+                data.forEach(windcharge => updateWindchargeMesh(windcharge));
+            } else {
+                updateWindchargeMesh(data);
+            }
+        });
+
+        socket.on('removeWindcharge', (id) => {
+            removeWindchargeMesh(id);
+        });
+
+        socket.on('windchargeExplosion', ({ x, y, z, targetId }) => {
+            createWindchargeEffect(x, y, z);
+            
+            if (targetId === playerId) {
+                showNotification('Knocked back by Wind Charge!', 2000);
+            }
+        });
+
+        socket.on('screenShake', ({ intensity, duration }) => {
+            triggerScreenShake(intensity, duration);
+        });
+
         // Breaking animation events for other players
         socket.on('startBreaking', ({ x, y, z, playerId, breakTime }) => {
             if (playerId === socket.id) return;
@@ -2716,6 +2995,11 @@
             });
             fireballProjectiles.clear();
             
+            windchargeProjectiles.forEach((windcharge, id) => {
+                removeWindchargeMesh(id);
+            });
+            windchargeProjectiles.clear();
+            
             otherPlayers.forEach((op, id) => {
                 scene.remove(op.group);
             });
@@ -2789,8 +3073,6 @@
             
             if (targetId === playerId && attackerId) {
                 showNotification(`You were hit! Health: ${newHealth}/10`, 2000);
-                // Trigger screen shake when hit
-                triggerScreenShake(0.4, 0.6);
             }
         });
 
