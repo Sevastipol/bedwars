@@ -386,9 +386,7 @@
         <span style="color: #ff8888">Hold L-Click: Break</span><br>
         <span style="color: #88ff88">R-Click: Build</span><br>
         <span style="color: #ff8888">Q: Drop Item</span><br>
-        <span style="color: #88aaff">Right-Click with Enderpearl: Throw</span><br>
-        <span style="color: #ffaa00">Right-Click with Fireball: Throw (Destroys blocks)</span><br>
-        <span style="color: #88ccff">Right-Click with Wind Charge: Throw (Knocks back players)</span><br>
+        <span style="color: #88aaff">Right-Click with throwable item: Throw</span><br>
         <span style="color: #ff88ff">Click on Players: Attack</span>
     </div>
     <div id="break-progress">
@@ -452,7 +450,7 @@
             'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
             'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
             'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
-            'Wind Charge': { color: 0x88ccff, cost: { gold: 24 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Wind Charge': { color: 0x88ccff, cost: { gold: 10 }, buyAmount: 1, isItem: true, hasTexture: true },
             'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
             'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
             'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true },
@@ -983,12 +981,13 @@
             if (fireballTexture) {
                 material = new THREE.SpriteMaterial({ 
                     map: fireballTexture,
+                    color: 0x9c9c9c,
                     opacity: 1.0,
                     transparent: true
                 });
             } else {
                 material = new THREE.SpriteMaterial({ 
-                    color: 0xaaaaaa,
+                    color: 0x9c9c9c,
                     opacity: 1.0,
                     transparent: true
                 });
@@ -1119,7 +1118,7 @@
 
         // Wind Charge explosion effect
         function createWindchargeEffect(x, y, z) {
-            const particleCount = 20;
+            const particleCount = 40;
             const explosionGroup = new THREE.Group();
             
             for (let i = 0; i < particleCount; i++) {
