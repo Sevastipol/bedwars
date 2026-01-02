@@ -42,7 +42,7 @@ const players = new Map();
 const enderpearls = new Map();
 const fireballs = new Map();
 const breakingAnimations = new Map();
-const activeBreaking = new Map(); // NEW: Track active breaking sessions
+const activeBreaking = new Map();
 
 let gameActive = false;
 let countdownTimer = null;
@@ -51,7 +51,7 @@ let suddenDeath = false;
 let roundTimerInterval = null;
 let playerCheckInterval = null;
 
-// Iron island positions (4 islands)
+// Iron island positions
 const ironIslands = [
     {offsetX: -15, offsetZ: -15, bedX: -14, bedY: 1, bedZ: -14},
     {offsetX: 33, offsetZ: -15, bedX: 34, bedY: 1, bedZ: -14},
@@ -59,16 +59,15 @@ const ironIslands = [
     {offsetX: 33, offsetZ: 33, bedX: 34, bedY: 1, bedZ: 34}
 ];
 
-// Gold island positions (2 islands)
+// Gold island positions
 const goldIslands = [
     {offsetX: 9, offsetZ: -15, spawnerX: 11.5, spawnerY: 1, spawnerZ: -12.5},
     {offsetX: 9, offsetZ: 33, spawnerX: 11.5, spawnerY: 1, spawnerZ: 35.5}
 ];
 
-// Emerald island position (1 island)
+// Emerald island position
 const emeraldIsland = {offsetX: 9, offsetZ: 9, spawnerX: 11.5, spawnerY: 1, spawnerZ: 11.5};
 
-// Track which iron islands are occupied
 let occupiedIronIslands = [];
 
 function blockKey(x, y, z) {
@@ -96,7 +95,6 @@ function removeBlock(x, y, z) {
                 p.bedPos = null;
                 io.to(id).emit('bedDestroyed');
                 
-                // Check if player should be eliminated immediately
                 if (!suddenDeath && gameActive) {
                     io.to(id).emit('notification', 'Your bed was destroyed! You will not respawn!');
                 }
@@ -212,48 +210,38 @@ function createIsland(offsetX, offsetZ, spawnerType = null) {
 }
 
 function initWorld() {
-    // Clear all existing blocks
     blocks.clear();
     pickups.clear();
     spawners.length = 0;
     enderpearls.clear();
     fireballs.clear();
     breakingAnimations.clear();
-    activeBreaking.clear(); // Clear active breaking sessions
+    activeBreaking.clear();
     
-    // Create iron islands
     ironIslands.forEach(island => {
         createIsland(island.offsetX, island.offsetZ, { type: 'iron', interval: 3 });
     });
     
-    // Create gold islands
     goldIslands.forEach(island => {
         createIsland(island.offsetX, island.offsetZ, { type: 'gold', interval: 8 });
     });
     
-    // Create emerald island
     createIsland(emeraldIsland.offsetX, emeraldIsland.offsetZ, { type: 'emerald', interval: 10 });
     
-    // Reset occupied islands
     occupiedIronIslands = [];
 }
 
-// Initialize world on server start
 initWorld();
 
 function assignPlayerToIsland(playerId) {
-    // Find first unoccupied iron island
     for (let i = 0; i < ironIslands.length; i++) {
         if (!occupiedIronIslands.includes(i)) {
             const island = ironIslands[i];
             
-            // Add bed at the island
             addBlock(island.bedX, island.bedY, island.bedZ, 'Bed');
             
-            // Mark island as occupied
             occupiedIronIslands.push(i);
             
-            // Update player state
             const p = players.get(playerId);
             p.bedPos = { x: island.bedX, y: island.bedY, z: island.bedZ };
             p.pos = { x: island.bedX + 0.5, y: island.bedY + 2, z: island.bedZ + 0.5 };
@@ -283,10 +271,8 @@ function endGame(winnerId) {
     
     console.log(`Game ended! Winner: ${winnerId || 'No winner'}`);
     
-    // Announce winner
     io.emit('gameEnd', { winner: winnerId });
     
-    // Reset game after delay
     setTimeout(() => {
         resetGame();
     }, 5000);
@@ -313,7 +299,6 @@ function checkWinCondition() {
     return false;
 }
 
-// New function to properly eliminate a player
 function eliminatePlayer(playerId, eliminatorId) {
     const p = players.get(playerId);
     if (!p) return;
@@ -324,7 +309,6 @@ function eliminatePlayer(playerId, eliminatorId) {
     p.health = PLAYER_MAX_HEALTH;
     p.pos = { x: 9 + 2.5, y: 50, z: 9 + 2.5 };
     
-    // Free up island
     if (p.bedPos) {
         for (let i = 0; i < ironIslands.length; i++) {
             if (ironIslands[i].bedX === p.bedPos.x && 
@@ -352,17 +336,14 @@ function eliminatePlayer(playerId, eliminatorId) {
         eliminatorId: eliminatorId
     });
     
-    // Remove player body for all other players
     io.emit('removePlayer', playerId);
     
-    // Check win condition
     checkWinCondition();
 }
 
 function resetGame() {
     console.log('Resetting game...');
     
-    // Reset world
     initWorld();
     
     const initBlocks = Array.from(blocks, ([key, type]) => {
@@ -371,7 +352,6 @@ function resetGame() {
     });
     const initPickups = Array.from(pickups, ([id, data]) => ({ id, ...data }));
     
-    // Reset all players to spectators
     players.forEach((p, id) => {
         p.inventory = new Array(INVENTORY_SIZE).fill(null);
         p.currency = { iron: 0, gold: 0, emerald: 0 };
@@ -396,7 +376,6 @@ function resetGame() {
         io.to(id).emit('updateCurrency', p.currency);
     });
     
-    // Send world reset to all clients
     io.emit('worldReset', { 
         blocks: initBlocks, 
         pickups: initPickups, 
@@ -413,17 +392,14 @@ function resetGame() {
     roundStartTime = null;
     stopRoundTimer();
     
-    // Start checking for players
     startPlayerCheck();
 }
 
 function startPlayerCheck() {
-    // Clear existing interval
     if (playerCheckInterval) {
         clearInterval(playerCheckInterval);
     }
     
-    // Check every second if game should start
     playerCheckInterval = setInterval(() => {
         if (!gameActive) {
             const totalPlayers = players.size;
@@ -431,7 +407,6 @@ function startPlayerCheck() {
             
             console.log(`Player check: ${totalPlayers} total, ${activePlayers.length} active`);
             
-            // If we have enough players and countdown isn't running, start countdown
             if (totalPlayers >= REQUIRED_PLAYERS && activePlayers.length < REQUIRED_PLAYERS && !countdownTimer) {
                 console.log('Starting countdown...');
                 let count = 10;
@@ -445,7 +420,6 @@ function startPlayerCheck() {
                         clearInterval(countdownTimer);
                         countdownTimer = null;
                         
-                        // Assign beds to all spectators
                         const assignedPlayers = [];
                         players.forEach((p, id) => {
                             if (p.spectator) {
@@ -464,21 +438,17 @@ function startPlayerCheck() {
                             }
                         });
                         
-                        // Check if we have enough players after assignment
                         const activeAfterAssignment = getActivePlayers();
                         if (activeAfterAssignment.length >= REQUIRED_PLAYERS) {
                             gameActive = true;
                             roundStartTime = Date.now();
                             
-                            // Start resource spawning
                             spawners.forEach(s => s.lastSpawn = Date.now());
                             
-                            // Start round timer
                             startRoundTimer();
                             
                             io.emit('gameStart');
                         } else {
-                            // Not enough players, cancel game
                             io.emit('notification', 'Not enough players assigned. Waiting...');
                             assignedPlayers.forEach(id => {
                                 const p = players.get(id);
@@ -486,9 +456,7 @@ function startPlayerCheck() {
                                 p.bedPos = null;
                                 io.to(id).emit('setSpectator', true);
                             });
-                            // Free up occupied islands
                             occupiedIronIslands = [];
-                            // Reset world
                             initWorld();
                         }
                     }
@@ -498,7 +466,6 @@ function startPlayerCheck() {
     }, 1000);
 }
 
-// NEW: Function to validate block breaking
 function validateBlockBreaking(playerId, x, y, z, type) {
     const p = players.get(playerId);
     if (!p || p.spectator) return false;
@@ -509,7 +476,6 @@ function validateBlockBreaking(playerId, x, y, z, type) {
     const blockType = blocks.get(key);
     if (blockType !== type) return false;
     
-    // Check distance (5.5 blocks maximum)
     const eyeHeight = p.crouch ? 1.3 : 1.6;
     const playerEyeY = p.pos.y - eyeHeight;
     const blockCenterY = y + 0.5;
@@ -523,7 +489,6 @@ function validateBlockBreaking(playerId, x, y, z, type) {
     return dist <= 5.5;
 }
 
-// NEW: Function to process block breaking
 function processBlockBreak(playerId, x, y, z) {
     const p = players.get(playerId);
     if (!p || p.spectator) return false;
@@ -533,19 +498,15 @@ function processBlockBreak(playerId, x, y, z) {
     
     const type = blocks.get(key);
     
-    // Check if it's a bed
     if (type === 'Bed') {
-        // Check if it's the player's own bed
         if (p.bedPos && p.bedPos.x === x && p.bedPos.y === y && p.bedPos.z === z) {
-            return false; // Can't break own bed
+            return false;
         }
         
-        // Remove bed
         removeBlock(x, y, z);
         return true;
     }
     
-    // For regular blocks, add to inventory
     if (addToInventory(p.inventory, type, 1)) {
         removeBlock(x, y, z);
         io.to(playerId).emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
@@ -559,7 +520,6 @@ function processBlockBreak(playerId, x, y, z) {
 io.on('connection', (socket) => {
     console.log(`New connection: ${socket.id}`);
     
-    // New players always start as spectators
     const playerState = {
         pos: { x: 9 + 2.5, y: 50, z: 9 + 2.5 },
         rot: { yaw: 0, pitch: 0 },
@@ -580,7 +540,6 @@ io.on('connection', (socket) => {
     
     players.set(socket.id, playerState);
 
-    // Send initial world
     const initBlocks = Array.from(blocks, ([key, type]) => {
         const [x, y, z] = key.split(',').map(Number);
         return { x, y, z, type };
@@ -600,13 +559,9 @@ io.on('connection', (socket) => {
         playersNeeded: getPlayersNeeded()
     });
 
-    // Send your ID
     socket.emit('yourId', socket.id);
-    
-    // Set spectator mode
     socket.emit('setSpectator', true);
 
-    // Send other players (excluding spectators)
     const otherPlayers = Array.from(players.entries())
         .filter(([id]) => id !== socket.id)
         .filter(([_, p]) => !p.spectator)
@@ -621,7 +576,6 @@ io.on('connection', (socket) => {
         }));
     socket.emit('playersSnapshot', otherPlayers);
 
-    // Broadcast new player (as spectator)
     socket.broadcast.emit('newPlayer', { 
         id: socket.id, 
         pos: playerState.pos, 
@@ -632,10 +586,8 @@ io.on('connection', (socket) => {
         equippedWeapon: playerState.equippedWeapon
     });
 
-    // Update waiting message
     updateWaitingMessages();
 
-    // If this is first player, start player check
     if (!playerCheckInterval) {
         startPlayerCheck();
     }
@@ -673,7 +625,6 @@ io.on('connection', (socket) => {
         socket.emit('updateCurrency', { ...p.currency });
     });
 
-    // FIXED: Server-side block breaking
     socket.on('breakAttempt', ({ x, y, z }) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -686,18 +637,14 @@ io.on('connection', (socket) => {
         
         const type = blocks.get(key);
         
-        // Validate the break
         if (!validateBlockBreaking(socket.id, x, y, z, type)) {
             socket.emit('revertBreak', { x, y, z, type });
             return;
         }
         
-        // Process the break
         if (processBlockBreak(socket.id, x, y, z)) {
-            // Success - block already removed by processBlockBreak
             return;
         } else {
-            // Failed - revert
             socket.emit('revertBreak', { x, y, z, type });
         }
     });
@@ -737,7 +684,6 @@ io.on('connection', (socket) => {
         slot.count--;
         if (slot.count === 0) {
             p.inventory[p.selected] = null;
-            // Update equipped weapon if it was a sword
             if (BLOCK_TYPES[type] && BLOCK_TYPES[type].isWeapon && p.selected === p.selected) {
                 p.equippedWeapon = null;
             }
@@ -775,7 +721,6 @@ io.on('connection', (socket) => {
         socket.emit('updateCurrency', { ...p.currency });
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
-        // If it's a weapon and player has it selected, update equipped weapon
         if (data.isWeapon && p.selected !== null) {
             const slot = p.inventory[p.selected];
             if (slot && slot.type === btype) {
@@ -784,19 +729,16 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Player combat
     socket.on('hitPlayer', (targetId) => {
         const attacker = players.get(socket.id);
         const target = players.get(targetId);
         
         if (!attacker || !target || attacker.spectator || target.spectator) return;
-        if (attacker.id === target.id) return; // Can't hit yourself
+        if (attacker.id === target.id) return;
         
-        // Check if attacker can hit (cooldown)
         const now = Date.now();
-        if (now - attacker.lastHitTime < 500) return; // 500ms cooldown
+        if (now - attacker.lastHitTime < 500) return;
         
-        // Check distance
         const dx = attacker.pos.x - target.pos.x;
         const dy = attacker.pos.y - target.pos.y;
         const dz = attacker.pos.z - target.pos.z;
@@ -807,8 +749,7 @@ io.on('connection', (socket) => {
             return;
         }
         
-        // Calculate damage based on equipped weapon
-        let damage = 1; // Default damage (fist)
+        let damage = 1;
         if (attacker.equippedWeapon) {
             const weaponData = BLOCK_TYPES[attacker.equippedWeapon];
             if (weaponData && weaponData.isWeapon) {
@@ -816,11 +757,9 @@ io.on('connection', (socket) => {
             }
         }
         
-        // Apply damage
         target.health -= damage;
         attacker.lastHitTime = now;
         
-        // Apply knockback (0.5 blocks)
         const knockback = 0.5;
         const dirX = dx / dist;
         const dirZ = dz / dist;
@@ -828,14 +767,12 @@ io.on('connection', (socket) => {
         target.pos.x -= dirX * knockback;
         target.pos.z -= dirZ * knockback;
         
-        // Send health update to all clients
         io.emit('playerHit', {
             attackerId: attacker.id,
             targetId: target.id,
             newHealth: target.health
         });
         
-        // Check if target is eliminated
         if (target.health <= 0) {
             const bedKey = target.bedPos ? blockKey(target.bedPos.x, target.bedPos.y, target.bedPos.z) : null;
             const hasBed = target.bedPos && blocks.get(bedKey) === 'Bed';
@@ -861,13 +798,11 @@ io.on('connection', (socket) => {
                 
                 io.to(targetId).emit('notification', 'You died and respawned at your bed!');
             } else {
-                // Use the new eliminatePlayer function
                 eliminatePlayer(targetId, attacker.id);
             }
         }
     });
 
-    // Enderpearl throwing
     socket.on('throwEnderpearl', (targetPos) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -878,14 +813,12 @@ io.on('connection', (socket) => {
             return;
         }
         
-        // Check server-side cooldown (1 second = 1000ms)
         const now = Date.now();
         if (now - p.lastEnderpearlThrow < 1000) {
             socket.emit('notification', 'Enderpearl cooldown!');
             return;
         }
         
-        // Reduce count
         slot.count--;
         if (slot.count === 0) {
             p.inventory[p.selected] = null;
@@ -895,24 +828,20 @@ io.on('connection', (socket) => {
         
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
-        // Create enderpearl projectile with velocity-based movement
         const pearlId = `pearl-${socket.id}-${now}-${Math.random().toString(36).substr(2, 9)}`;
         
-        // Start from player's eye position
         const startPos = {
             x: p.pos.x,
             y: p.pos.y + (p.crouch ? 1.3 : 1.6),
             z: p.pos.z
         };
         
-        // Get throw direction from targetPos (which should be where player is looking)
         const direction = {
             x: targetPos.x - startPos.x,
             y: targetPos.y - startPos.y,
             z: targetPos.z - startPos.z
         };
         
-        // Normalize and set velocity (speed: 15 blocks per second)
         const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
         const speed = 25;
         const velocity = {
@@ -936,7 +865,6 @@ io.on('connection', (socket) => {
         
         console.log(`Enderpearl thrown by ${socket.id}, ID: ${pearlId}, Velocity:`, velocity);
         
-        // Send pearl to all clients
         io.emit('addEnderpearl', {
             id: pearl.id,
             x: startPos.x,
@@ -947,7 +875,6 @@ io.on('connection', (socket) => {
         });
     });
 
-    // Fireball throwing
     socket.on('throwFireball', (targetPos) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
@@ -958,14 +885,12 @@ io.on('connection', (socket) => {
             return;
         }
         
-        // Check server-side cooldown (0.1 seconds = 100ms)
         const now = Date.now();
         if (now - p.lastFireballThrow < 100) {
             socket.emit('notification', 'Fireball cooldown!');
             return;
         }
         
-        // Reduce count
         slot.count--;
         if (slot.count === 0) {
             p.inventory[p.selected] = null;
@@ -975,24 +900,20 @@ io.on('connection', (socket) => {
         
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
         
-        // Create fireball projectile
         const fireballId = `fireball-${socket.id}-${now}-${Math.random().toString(36).substr(2, 9)}`;
         
-        // Start from player's eye position
         const startPos = {
             x: p.pos.x,
             y: p.pos.y + (p.crouch ? 1.3 : 1.6),
             z: p.pos.z
         };
         
-        // Get throw direction from targetPos
         const direction = {
             x: targetPos.x - startPos.x,
             y: targetPos.y - startPos.y,
             z: targetPos.z - startPos.z
         };
         
-        // Normalize and set velocity (speed: 20 blocks per second)
         const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
         const speed = 20;
         const velocity = {
@@ -1016,7 +937,6 @@ io.on('connection', (socket) => {
         
         console.log(`Fireball thrown by ${socket.id}, ID: ${fireballId}`);
         
-        // Send fireball to all clients
         io.emit('addFireball', {
             id: fireball.id,
             x: startPos.x,
@@ -1027,12 +947,10 @@ io.on('connection', (socket) => {
         });
     });
 
-    // NEW: Fireball block hit detection
     socket.on('fireballHitBlock', ({ fireballId, x, y, z }) => {
         const fireball = fireballs.get(fireballId);
         if (!fireball) return;
         
-        // Destroy blocks in a 3x3x3 area centered on the hit block
         const blocksDestroyed = [];
         for (let dx = -1; dx <= 1; dx++) {
             for (let dy = -1; dy <= 1; dy++) {
@@ -1042,19 +960,16 @@ io.on('connection', (socket) => {
                     const blockZ = z + dz;
                     const key = blockKey(blockX, blockY, blockZ);
                     
-                    // Check if block exists and is not a bed (protect beds from fireball)
                     if (blocks.has(key)) {
                         const blockType = blocks.get(key);
                         
-                        // Don't destroy beds with fireballs
                         if (blockType === 'Bed') {
-                            // Check if it's the player's own bed
                             const player = players.get(fireball.owner);
                             if (player && player.bedPos && 
                                 player.bedPos.x === blockX && 
                                 player.bedPos.y === blockY && 
                                 player.bedPos.z === blockZ) {
-                                continue; // Don't destroy own bed
+                                continue;
                             }
                         }
                         
@@ -1065,7 +980,6 @@ io.on('connection', (socket) => {
             }
         }
         
-        // Send explosion effect and block removals to clients
         io.emit('fireballExplosion', {
             x: x,
             y: y,
@@ -1073,17 +987,14 @@ io.on('connection', (socket) => {
             blocksDestroyed: blocksDestroyed
         });
         
-        // Remove the fireball
         fireballs.delete(fireballId);
         io.emit('removeFireball', fireballId);
     });
 
-    // NEW: Breaking animation synchronization
     socket.on('startBreaking', ({ x, y, z, breakTime }) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
         
-        // Store breaking animation
         breakingAnimations.set(socket.id, {
             x, y, z,
             progress: 0,
@@ -1091,7 +1002,6 @@ io.on('connection', (socket) => {
             breakTime
         });
         
-        // Broadcast to other players (except the sender)
         socket.broadcast.emit('startBreaking', {
             x, y, z,
             playerId: socket.id,
@@ -1103,7 +1013,6 @@ io.on('connection', (socket) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
         
-        // Update breaking animation
         if (breakingAnimations.has(socket.id)) {
             const anim = breakingAnimations.get(socket.id);
             anim.x = x;
@@ -1112,7 +1021,6 @@ io.on('connection', (socket) => {
             anim.progress = progress;
             anim.lastUpdate = Date.now();
             
-            // Broadcast to other players (except the sender)
             socket.broadcast.emit('breakingProgress', {
                 x, y, z,
                 playerId: socket.id,
@@ -1122,11 +1030,9 @@ io.on('connection', (socket) => {
     });
 
     socket.on('stopBreaking', ({ x, y, z }) => {
-        // Remove breaking animation
         if (breakingAnimations.has(socket.id)) {
             breakingAnimations.delete(socket.id);
             
-            // Broadcast to other players (except the sender)
             socket.broadcast.emit('stopBreaking', {
                 x, y, z,
                 playerId: socket.id
@@ -1139,13 +1045,10 @@ io.on('connection', (socket) => {
         
         const p = players.get(socket.id);
         if (p) {
-            // If player was in a match and not a spectator
             if (gameActive && !p.spectator) {
-                // Remove player's bed if they have one
                 if (p.bedPos) {
                     removeBlock(p.bedPos.x, p.bedPos.y, p.bedPos.z);
                     
-                    // Find and free the occupied island
                     for (let i = 0; i < ironIslands.length; i++) {
                         if (ironIslands[i].bedX === p.bedPos.x && 
                             ironIslands[i].bedY === p.bedPos.y && 
@@ -1159,12 +1062,10 @@ io.on('connection', (socket) => {
                     }
                 }
                 
-                // IMPORTANT: Broadcast removal of player body
                 io.emit('removePlayer', socket.id);
                 
                 players.delete(socket.id);
                 
-                // Check if game should end due to lack of players (1 or less)
                 const activePlayers = getActivePlayers();
                 console.log(`Active players after disconnect: ${activePlayers.length}`);
                 
@@ -1172,12 +1073,10 @@ io.on('connection', (socket) => {
                     endGame(activePlayers.length === 1 ? activePlayers[0].id : null);
                 }
             } else {
-                // If not in a match or spectator, just remove the player
                 players.delete(socket.id);
                 io.emit('removePlayer', socket.id);
             }
             
-            // NEW: Clean up breaking animations
             if (breakingAnimations.has(socket.id)) {
                 const anim = breakingAnimations.get(socket.id);
                 socket.broadcast.emit('stopBreaking', {
@@ -1191,7 +1090,6 @@ io.on('connection', (socket) => {
             
             updateWaitingMessages();
             
-            // Check if we need to cancel countdown
             if (!gameActive && countdownTimer) {
                 const activePlayers = getActivePlayers();
                 if (activePlayers.length < REQUIRED_PLAYERS) {
@@ -1211,7 +1109,6 @@ setInterval(() => {
     const now = Date.now();
     
     if (gameActive) {
-        // Spawn resources
         spawners.forEach((s) => {
             if (now - s.lastSpawn >= s.interval) {
                 spawnPickup(s.x, s.y + 0.8, s.z, s.resourceType);
@@ -1229,58 +1126,48 @@ setInterval(() => {
             suddenDeath = true;
         }
 
-        // Enderpearl physics
         const pearlUpdates = [];
         const pearlRemovals = [];
         
         enderpearls.forEach((pearl, id) => {
             if (pearl.arrived || pearl.hit) return;
             
-            const deltaTime = (now - pearl.lastUpdate) / 1000; // in seconds
+            const deltaTime = (now - pearl.lastUpdate) / 1000;
             pearl.lastUpdate = now;
             
-            // Apply gravity
-            const GRAVITY = 20; // blocks per second squared
+            const GRAVITY = 20;
             pearl.velocity.y -= GRAVITY * deltaTime;
             
-            // Update position
             pearl.pos.x += pearl.velocity.x * deltaTime;
             pearl.pos.y += pearl.velocity.y * deltaTime;
             pearl.pos.z += pearl.velocity.z * deltaTime;
             
-            // Check if hit a block
             const blockX = Math.floor(pearl.pos.x);
             const blockY = Math.floor(pearl.pos.y);
             const blockZ = Math.floor(pearl.pos.z);
             const blockKeyStr = blockKey(blockX, blockY, blockZ);
             
             if (blocks.has(blockKeyStr) && now - pearl.createdAt > 200) {
-                // Hit a block - teleport player
                 pearl.hit = true;
                 
-                // Teleport player (NO DAMAGE)
                 const player = players.get(pearl.owner);
                 if (player && !player.spectator) {
-                    // Find safe position (just before the hit) and teleport up 1 block
                     const safePos = {
                         x: pearl.pos.x - pearl.velocity.x * deltaTime,
-                        y: pearl.pos.y - pearl.velocity.y * deltaTime + 1.0, // Teleport up 1 block
+                        y: pearl.pos.y - pearl.velocity.y * deltaTime + 1.0,
                         z: pearl.pos.z - pearl.velocity.z * deltaTime
                     };
                     
-                    // Ensure we're not inside a block
                     let teleportY = safePos.y;
                     const checkX = Math.floor(safePos.x);
                     const checkZ = Math.floor(safePos.z);
                     
-                    // Check blocks at the teleport position
                     for (let y = Math.floor(teleportY); y < Math.floor(teleportY) + 3; y++) {
                         if (blocks.has(blockKey(checkX, y, checkZ))) {
-                            teleportY = y + 1.5; // Move above the block
+                            teleportY = y + 1.5;
                         }
                     }
                     
-                    // Update player position
                     player.pos.x = safePos.x;
                     player.pos.y = teleportY;
                     player.pos.z = safePos.z;
@@ -1294,15 +1181,12 @@ setInterval(() => {
                     io.to(pearl.owner).emit('notification', 'Ender pearl teleport!');
                 }
                 
-                // Mark for removal
                 pearl.arrived = true;
                 pearlRemovals.push(id);
             } else if (pearl.pos.y < -30 || now - pearl.createdAt > 10000) {
-                // Fell into void or timeout (10 seconds)
                 pearl.arrived = true;
                 pearlRemovals.push(id);
             } else {
-                // Still in flight
                 pearlUpdates.push({
                     id: pearl.id,
                     x: pearl.pos.x,
@@ -1312,49 +1196,41 @@ setInterval(() => {
             }
         });
         
-        // Send updates to clients
         if (pearlUpdates.length > 0) {
             io.emit('updateEnderpearl', pearlUpdates);
         }
         
-        // Remove pearls that have hit or timed out
         pearlRemovals.forEach(id => {
             enderpearls.delete(id);
             io.emit('removeEnderpearl', id);
             console.log(`Enderpearl ${id} removed (hit or timeout)`);
         });
 
-        // Fireball physics - WITH IMPROVED BLOCK COLLISION DETECTION
         const fireballUpdates = [];
         const fireballRemovals = [];
         
         fireballs.forEach((fireball, id) => {
             if (fireball.arrived || fireball.hit) return;
             
-            const deltaTime = (now - fireball.lastUpdate) / 1000; // in seconds
+            const deltaTime = (now - fireball.lastUpdate) / 1000;
             fireball.lastUpdate = now;
             
-            // Store previous position for collision detection
             const prevPos = { ...fireball.pos };
             
-            // Apply gravity (less gravity than enderpearl for more direct trajectory)
             const GRAVITY = 10;
             fireball.velocity.y -= GRAVITY * deltaTime;
             
-            // Update position
             fireball.pos.x += fireball.velocity.x * deltaTime;
             fireball.pos.y += fireball.velocity.y * deltaTime;
             fireball.pos.z += fireball.velocity.z * deltaTime;
             
-            // IMPROVED: Check for block collisions along the path
             const dx = fireball.pos.x - prevPos.x;
             const dy = fireball.pos.y - prevPos.y;
             const dz = fireball.pos.z - prevPos.z;
             const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
             
             if (distance > 0) {
-                // Check multiple points along the path to ensure we don't miss collisions
-                const steps = Math.ceil(distance * 2); // Check every 0.5 blocks
+                const steps = Math.ceil(distance * 2);
                 let hitBlock = null;
                 
                 for (let i = 0; i <= steps; i++) {
@@ -1375,10 +1251,8 @@ setInterval(() => {
                 }
                 
                 if (hitBlock) {
-                    // Hit a block - destroy blocks in 3x3x3 area
                     fireball.hit = true;
                     
-                    // Destroy blocks in a 3x3x3 area centered on the hit block
                     const blocksDestroyed = [];
                     for (let dx = -1; dx <= 1; dx++) {
                         for (let dy = -1; dy <= 1; dy++) {
@@ -1388,19 +1262,16 @@ setInterval(() => {
                                 const z = hitBlock.z + dz;
                                 const key = blockKey(x, y, z);
                                 
-                                // Check if block exists and is not a bed (protect beds from fireball)
                                 if (blocks.has(key)) {
                                     const blockType = blocks.get(key);
                                     
-                                    // Don't destroy beds with fireballs
                                     if (blockType === 'Bed') {
-                                        // Check if it's the player's own bed
                                         const player = players.get(fireball.owner);
                                         if (player && player.bedPos && 
                                             player.bedPos.x === x && 
                                             player.bedPos.y === y && 
                                             player.bedPos.z === z) {
-                                            continue; // Don't destroy own bed
+                                            continue;
                                         }
                                     }
                                     
@@ -1411,7 +1282,6 @@ setInterval(() => {
                         }
                     }
                     
-                    // Send explosion effect and block removals to clients
                     io.emit('fireballExplosion', {
                         x: hitBlock.x,
                         y: hitBlock.y,
@@ -1419,15 +1289,12 @@ setInterval(() => {
                         blocksDestroyed: blocksDestroyed
                     });
                     
-                    // Mark for removal
                     fireball.arrived = true;
                     fireballRemovals.push(id);
                 } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
-                    // Fell into void or timeout (10 seconds)
                     fireball.arrived = true;
                     fireballRemovals.push(id);
                 } else {
-                    // Still in flight
                     fireballUpdates.push({
                         id: fireball.id,
                         x: fireball.pos.x,
@@ -1436,11 +1303,9 @@ setInterval(() => {
                     });
                 }
             } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
-                // Fell into void or timeout (10 seconds)
                 fireball.arrived = true;
                 fireballRemovals.push(id);
             } else {
-                // Still in flight
                 fireballUpdates.push({
                     id: fireball.id,
                     x: fireball.pos.x,
@@ -1450,21 +1315,18 @@ setInterval(() => {
             }
         });
         
-        // Send updates to clients
         if (fireballUpdates.length > 0) {
             io.emit('updateFireball', fireballUpdates);
         }
         
-        // Remove fireballs that have hit or timed out
         fireballRemovals.forEach(id => {
             fireballs.delete(id);
             io.emit('removeFireball', id);
         });
 
-        // NEW: Clean up old breaking animations (if player stops without sending stop event)
         const breakingAnimationsToRemove = [];
         breakingAnimations.forEach((anim, playerId) => {
-            if (now - anim.lastUpdate > 5000) { // 5 seconds without update
+            if (now - anim.lastUpdate > 5000) {
                 breakingAnimationsToRemove.push(playerId);
             }
         });
@@ -1482,7 +1344,6 @@ setInterval(() => {
             }
         });
 
-        // Check for death/respawn (for falling into void)
         players.forEach((p, id) => {
             if (p.spectator) return;
             
@@ -1499,20 +1360,17 @@ setInterval(() => {
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                     io.to(id).emit('notification', 'You fell into the void and respawned at your bed!');
                 } else {
-                    // Player eliminated by falling into void
                     eliminatePlayer(id, null);
                 }
                 p.lastRespawn = now;
             }
         });
         
-        // Periodically check win condition (in case something was missed)
-        if (Math.random() < 0.1) { // 10% chance per game loop iteration
+        if (Math.random() < 0.1) {
             checkWinCondition();
         }
     }
 
-    // Sync players (20 FPS) with health and equipped weapon information
     const states = Array.from(players.entries()).map(([id, p]) => ({
         id,
         pos: p.pos,
@@ -1523,7 +1381,6 @@ setInterval(() => {
         equippedWeapon: p.equippedWeapon
     }));
     io.emit('playersUpdate', states);
-}, 50); // 20 FPS game loop
+}, 50);
 
-// Start player check on server start
 startPlayerCheck();
