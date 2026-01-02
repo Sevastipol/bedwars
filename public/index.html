@@ -1063,193 +1063,176 @@
                 });
             }
             
-           function createWindchargeMesh(data) {
-        let material;
-        if (windchargeTexture) {
-            material = new THREE.SpriteMaterial({ 
-                map: windchargeTexture,
-                opacity: 1.0,
-                transparent: true
-            });
-        } else {
-            material = new THREE.SpriteMaterial({ 
-                color: 0x88ccff,
-                opacity: 1.0,
-                transparent: true
-            });
-        }
-        
-        const windcharge = new THREE.Sprite(material);
-        windcharge.position.set(data.x, data.y, data.z);
-        windcharge.scale.set(0.4, 0.4, 1); // Smaller size like Minecraft
-        
-        windcharge.userData = { 
-            id: data.id, 
-            type: 'windcharge',
-            owner: data.owner,
-            velocity: data.velocity,
-            lastUpdate: Date.now(),
-            lastPos: { x: data.x, y: data.y, z: data.z }
-        };
-        
-        scene.add(windcharge);
-        windchargeProjectiles.set(data.id, windcharge);
-        return windcharge;
-    }
-
-    function updateWindchargeMesh(windchargeData) {
-        const windcharge = windchargeProjectiles.get(windchargeData.id);
-        if (windcharge) {
-            if (windcharge.userData.lastPos) {
-                const lerpFactor = 0.3;
-                windcharge.position.x = THREE.MathUtils.lerp(
-                    windcharge.position.x,
-                    windchargeData.x,
-                    lerpFactor
-                );
-                windcharge.position.y = THREE.MathUtils.lerp(
-                    windcharge.position.y,
-                    windchargeData.y,
-                    lerpFactor
-                );
-                windcharge.position.z = THREE.MathUtils.lerp(
-                    windcharge.position.z,
-                    windchargeData.z,
-                    lerpFactor
-                );
-            } else {
-                windcharge.position.set(windchargeData.x, windchargeData.y, windchargeData.z);
-            }
+            const windcharge = new THREE.Sprite(material);
+            windcharge.position.set(data.x, data.y, data.z);
+            windcharge.scale.set(0.4, 0.4, 1); // Smaller size like Minecraft
             
-            // Rotate wind charge like Minecraft
-            windcharge.material.rotation += 0.15;
-            windcharge.material.needsUpdate = true;
-        }
-    }
-
-    function removeWindchargeMesh(id) {
-        const windcharge = windchargeProjectiles.get(id);
-        if (windcharge) {
-            scene.remove(windcharge);
-            if (windcharge.material) windcharge.material.dispose();
-            windchargeProjectiles.delete(id);
-        }
-    }
-
-    // Wind Charge explosion effect - Minecraft style
-    function createWindchargeEffect(x, y, z) {
-        // Main explosion particles
-        const particleCount = 30;
-        const explosionGroup = new THREE.Group();
-        
-        for (let i = 0; i < particleCount; i++) {
-            const geometry = new THREE.SphereGeometry(0.08, 6, 6);
-            const material = new THREE.MeshBasicMaterial({ 
-                color: 0xaaddff, // Lighter blue color
-                transparent: true,
-                opacity: 0.9
-            });
-            const particle = new THREE.Mesh(geometry, material);
-            
-            // Random direction in all directions
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.random() * Math.PI;
-            const speed = 1.5 + Math.random() * 2;
-            
-            particle.userData.velocity = {
-                x: Math.sin(phi) * Math.cos(theta) * speed,
-                y: Math.cos(phi) * speed,
-                z: Math.sin(phi) * Math.sin(theta) * speed
-            };
-            particle.userData.life = 1.0;
-            particle.userData.decay = 0.05 + Math.random() * 0.05;
-            
-            particle.position.set(x + 0.5, y + 0.5, z + 0.5);
-            explosionGroup.add(particle);
-        }
-        
-        // Add small wind lines/circles
-        const circleCount = 8;
-        for (let i = 0; i < circleCount; i++) {
-            const radius = 0.1 + Math.random() * 0.2;
-            const segments = 8;
-            const circleGeometry = new THREE.CircleGeometry(radius, segments);
-            const circleMaterial = new THREE.MeshBasicMaterial({
-                color: 0x88ccff,
-                transparent: true,
-                opacity: 0.7,
-                side: THREE.DoubleSide
-            });
-            const circle = new THREE.Mesh(circleGeometry, circleMaterial);
-            
-            const angle = (i / circleCount) * Math.PI * 2;
-            const distance = 0.3 + Math.random() * 0.4;
-            
-            circle.position.set(
-                x + 0.5 + Math.cos(angle) * distance,
-                y + 0.5,
-                z + 0.5 + Math.sin(angle) * distance
-            );
-            
-            circle.rotation.x = Math.PI / 2; // Make it horizontal
-            
-            circle.userData = {
-                life: 1.0,
-                decay: 0.03,
-                scale: 1.0,
-                expandSpeed: 2 + Math.random() * 3
+            windcharge.userData = { 
+                id: data.id, 
+                type: 'windcharge',
+                owner: data.owner,
+                velocity: data.velocity,
+                lastUpdate: Date.now(),
+                lastPos: { x: data.x, y: data.y, z: data.z }
             };
             
-            explosionGroup.add(circle);
+            scene.add(windcharge);
+            windchargeProjectiles.set(data.id, windcharge);
+            return windcharge;
         }
-        
-        scene.add(explosionGroup);
-        
-        function animateExplosion() {
-            let allDead = true;
-            
-            explosionGroup.children.forEach(object => {
-                if (object.userData.life <= 0) return;
-                
-                object.userData.life -= object.userData.decay;
-                
-                if (object.userData.life > 0) {
-                    allDead = false;
-                    
-                    // Handle particles
-                    if (object.userData.velocity) {
-                        object.position.x += object.userData.velocity.x * 0.1;
-                        object.position.y += object.userData.velocity.y * 0.1;
-                        object.position.z += object.userData.velocity.z * 0.1;
-                        object.material.opacity = object.userData.life;
-                        object.scale.setScalar(object.userData.life * 0.5);
-                    }
-                    // Handle wind circles
-                    else {
-                        object.userData.scale += object.userData.expandSpeed * 0.1;
-                        object.scale.setScalar(object.userData.scale);
-                        object.material.opacity = object.userData.life;
-                        
-                        // Move upward slightly
-                        object.position.y += 0.02;
-                    }
+
+        function updateWindchargeMesh(windchargeData) {
+            const windcharge = windchargeProjectiles.get(windchargeData.id);
+            if (windcharge) {
+                if (windcharge.userData.lastPos) {
+                    const lerpFactor = 0.3;
+                    windcharge.position.x = THREE.MathUtils.lerp(
+                        windcharge.position.x,
+                        windchargeData.x,
+                        lerpFactor
+                    );
+                    windcharge.position.y = THREE.MathUtils.lerp(
+                        windcharge.position.y,
+                        windchargeData.y,
+                        lerpFactor
+                    );
+                    windcharge.position.z = THREE.MathUtils.lerp(
+                        windcharge.position.z,
+                        windchargeData.z,
+                        lerpFactor
+                    );
+                } else {
+                    windcharge.position.set(windchargeData.x, windchargeData.y, windchargeData.z);
                 }
-            });
-            
-            if (!allDead) {
-                requestAnimationFrame(animateExplosion);
-            } else {
-                scene.remove(explosionGroup);
-                explosionGroup.children.forEach(object => {
-                    object.geometry.dispose();
-                    object.material.dispose();
-                });
+                
+                // Rotate wind charge like Minecraft
+                windcharge.material.rotation += 0.15;
+                windcharge.material.needsUpdate = true;
             }
         }
-        
-        animateExplosion();
-    }
 
+        function removeWindchargeMesh(id) {
+            const windcharge = windchargeProjectiles.get(id);
+            if (windcharge) {
+                scene.remove(windcharge);
+                if (windcharge.material) windcharge.material.dispose();
+                windchargeProjectiles.delete(id);
+            }
+        }
+
+        // Wind Charge explosion effect - Minecraft style
+        function createWindchargeEffect(x, y, z) {
+            // Main explosion particles
+            const particleCount = 30;
+            const explosionGroup = new THREE.Group();
+            
+            for (let i = 0; i < particleCount; i++) {
+                const geometry = new THREE.SphereGeometry(0.08, 6, 6);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0xaaddff, // Lighter blue color
+                    transparent: true,
+                    opacity: 0.9
+                });
+                const particle = new THREE.Mesh(geometry, material);
+                
+                // Random direction in all directions
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.random() * Math.PI;
+                const speed = 1.5 + Math.random() * 2;
+                
+                particle.userData.velocity = {
+                    x: Math.sin(phi) * Math.cos(theta) * speed,
+                    y: Math.cos(phi) * speed,
+                    z: Math.sin(phi) * Math.sin(theta) * speed
+                };
+                particle.userData.life = 1.0;
+                particle.userData.decay = 0.05 + Math.random() * 0.05;
+                
+                particle.position.set(x + 0.5, y + 0.5, z + 0.5);
+                explosionGroup.add(particle);
+            }
+            
+            // Add small wind lines/circles
+            const circleCount = 8;
+            for (let i = 0; i < circleCount; i++) {
+                const radius = 0.1 + Math.random() * 0.2;
+                const segments = 8;
+                const circleGeometry = new THREE.CircleGeometry(radius, segments);
+                const circleMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x88ccff,
+                    transparent: true,
+                    opacity: 0.7,
+                    side: THREE.DoubleSide
+                });
+                const circle = new THREE.Mesh(circleGeometry, circleMaterial);
+                
+                const angle = (i / circleCount) * Math.PI * 2;
+                const distance = 0.3 + Math.random() * 0.4;
+                
+                circle.position.set(
+                    x + 0.5 + Math.cos(angle) * distance,
+                    y + 0.5,
+                    z + 0.5 + Math.sin(angle) * distance
+                );
+                
+                circle.rotation.x = Math.PI / 2; // Make it horizontal
+                
+                circle.userData = {
+                    life: 1.0,
+                    decay: 0.03,
+                    scale: 1.0,
+                    expandSpeed: 2 + Math.random() * 3
+                };
+                
+                explosionGroup.add(circle);
+            }
+            
+            scene.add(explosionGroup);
+            
+            function animateExplosion() {
+                let allDead = true;
+                
+                explosionGroup.children.forEach(object => {
+                    if (object.userData.life <= 0) return;
+                    
+                    object.userData.life -= object.userData.decay;
+                    
+                    if (object.userData.life > 0) {
+                        allDead = false;
+                        
+                        // Handle particles
+                        if (object.userData.velocity) {
+                            object.position.x += object.userData.velocity.x * 0.1;
+                            object.position.y += object.userData.velocity.y * 0.1;
+                            object.position.z += object.userData.velocity.z * 0.1;
+                            object.material.opacity = object.userData.life;
+                            object.scale.setScalar(object.userData.life * 0.5);
+                        }
+                        // Handle wind circles
+                        else {
+                            object.userData.scale += object.userData.expandSpeed * 0.1;
+                            object.scale.setScalar(object.userData.scale);
+                            object.material.opacity = object.userData.life;
+                            
+                            // Move upward slightly
+                            object.position.y += 0.02;
+                        }
+                    }
+                });
+                
+                if (!allDead) {
+                    requestAnimationFrame(animateExplosion);
+                } else {
+                    scene.remove(explosionGroup);
+                    explosionGroup.children.forEach(object => {
+                        object.geometry.dispose();
+                        object.material.dispose();
+                    });
+                }
+            }
+            
+            animateExplosion();
+        }
 
         // Fireball explosion effect
         function createFireballExplosion(x, y, z) {
@@ -2243,7 +2226,7 @@
                     
                     windcharge.lookAt(camera.position);
                     
-                    windcharge.scale.set(0.7, 0.7, 1);
+                    windcharge.scale.set(0.4, 0.4, 1);
                     
                     windcharge.material.opacity = 1.0;
                     windcharge.material.needsUpdate = true;
@@ -2571,7 +2554,7 @@
                 } else if (name === 'Wind Charge') {
                     extraInfo = `<br><span style="color:#88ccff; font-size:0.8em;">Knocks back players 4 blocks</span>`;
                 } else if (name === 'Fireball') {
-                    extraInfo = `<br><span style="color:#ffaa00; font-size:0.8em;">Destroys blocks on impact</span>`;
+                    extraInfo = `<br><span style="color:#ffaa00; font-size:0.8em;">Direct hit: 6 damage, Explosion: 1-6 damage</span>`;
                 } else if (name === 'Enderpearl') {
                     extraInfo = `<br><span style="color:#88ff88; font-size:0.8em;">Teleports you to impact point</span>`;
                 }
@@ -2945,12 +2928,8 @@
             removeWindchargeMesh(id);
         });
 
-        socket.on('windchargeExplosion', ({ x, y, z, targetId }) => {
+        socket.on('windchargeExplosion', ({ x, y, z }) => {
             createWindchargeEffect(x, y, z);
-            
-            if (targetId === playerId) {
-                showNotification('Knocked back by Wind Charge!', 2000);
-            }
         });
 
         socket.on('screenShake', ({ intensity, duration }) => {
