@@ -68,28 +68,6 @@
             image-rendering: pixelated;
         }
 
-        #hearts {
-            position: absolute;
-            top: 160px;
-            left: 20px;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            padding: 15px;
-            border-radius: 10px;
-            pointer-events: none;
-        }
-
-        .heart {
-            width: 24px;
-            height: 24px;
-            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23ff4444"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>');
-            background-size: contain;
-        }
-
-        .heart.empty {
-            filter: grayscale(100%) brightness(0.3);
-        }
-
         #item-name-overlay {
             position: absolute;
             bottom: 100px;
@@ -187,36 +165,16 @@
             display: none;
             text-align: center;
             border: 2px solid #555;
-            min-width: 550px;
+            min-width: 450px;
             z-index: 20;
             box-shadow: 0 0 20px rgba(0,0,0,0.8);
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .shop-header {
-            margin-bottom: 20px;
-            border-bottom: 1px solid #555;
-            padding-bottom: 10px;
-        }
-
-        .shop-category {
-            margin: 20px 0;
-            text-align: left;
-        }
-
-        .shop-category h3 {
-            color: #fff;
-            border-bottom: 1px solid #444;
-            padding-bottom: 5px;
-            margin-bottom: 10px;
         }
 
         .shop-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 12px;
-            margin-bottom: 20px;
+            margin-top: 15px;
         }
 
         .shop-item {
@@ -225,7 +183,6 @@
             cursor: pointer;
             background: #222;
             transition: 0.2s;
-            text-align: center;
         }
 
         .shop-item:hover {
@@ -300,17 +257,6 @@
             border-radius: 10px;
             display: none;
             z-index: 15;
-        }
-
-        /* Screen shake container */
-        .screen-shake {
-            animation: shake 0.3s ease;
-        }
-
-        @keyframes shake {
-            0%, 100% { transform: translateX(0) translateY(0); }
-            10%, 30%, 50%, 70%, 90% { transform: translateX(-5px) translateY(-5px); }
-            20%, 40%, 60%, 80% { transform: translateX(5px) translateY(5px); }
         }
 
         #spectator-indicator {
@@ -432,11 +378,6 @@
             <img src="https://i.ibb.co/hxX4ywxj/pixilart-drawing-8.png" class="currency-icon">
             <span id="emerald">0</span>
         </div>
-        <!-- New Hearts Display -->
-        <div class="currency-row" id="hearts-display">
-            <div class="heart"></div>
-            <span id="heart-count">10</span>
-        </div>
     </div>
     <div id="controls-hint">
         WASD: Move | SPACE: Jump<br>
@@ -454,11 +395,9 @@
     <div id="item-name-overlay"></div>
     <div id="hotbar-container"></div>
     <div id="shop">
-        <div class="shop-header">
-            <h2>Shop</h2>
-            <div style="color: #aaa; font-size: 0.9em; margin-bottom: 10px;">Scroll down to see all items</div>
-        </div>
-        <div class="shop-categories" id="shop-container"></div>
+        <h2>Shop</h2>
+        <div style="color: #aaa; font-size: 0.9em; margin-bottom: 10px;">Click to buy items</div>
+        <div class="shop-grid" id="shop-container"></div>
         <p style="color: #888; margin-top: 20px; font-size: 0.8em;">Press [B] to Close</p>
     </div>
     <div id="notification"></div>
@@ -493,26 +432,19 @@
         let lastEnderpearlThrow = 0;
         let lastFireballThrow = 0;
 
-        // --- Player Health System ---
-        let playerHealth = 10;
-        let maxHealth = 10;
-        let lastDamageTime = 0;
-        let healthRegenTimer = null;
-        let isShaking = false;
-
         // --- Config ---
         const BLOCK_TYPES = {
-            'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true, category: 'blocks' },
-            'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6, category: 'blocks' },
-            'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true, category: 'blocks' },
-            'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true, category: 'blocks' },
-            'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true, category: 'blocks' },
-            'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false, category: 'blocks' },
-            'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true, category: 'misc' },
-            'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true, category: 'misc' },
-            'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true, category: 'weapons' },
-            'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true, category: 'weapons' },
-            'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true, category: 'weapons' }
+            'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true },
+            'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6 },
+            'Wood': { color: 0x5d4037, cost: { gold: 5 }, breakTime: 3, buyAmount: 32, hasTexture: true },
+            'Stone': { color: 0x777777, cost: { gold: 5 }, breakTime: 6, buyAmount: 8, hasTexture: true },
+            'Obsidian': { color: 0x111111, cost: { emerald: 1 }, breakTime: 12, buyAmount: 1, hasTexture: true },
+            'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
+            'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
+            'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
+            'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
+            'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true }
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
@@ -549,92 +481,8 @@
         let blocksMeshes = new Map();
         let pickupMeshes = new Map();
         let otherPlayers = new Map();
-        let playerHealths = new Map();
+        let playerHealth = new Map();
         let playerSwords = new Map();
-
-        // --- Screen Shake Function ---
-        function screenShake(intensity = 0.2, duration = 300) {
-            if (isShaking) return;
-            isShaking = true;
-            
-            const cameraGroup = new THREE.Group();
-            cameraGroup.position.copy(camera.position);
-            cameraGroup.rotation.copy(camera.rotation);
-            scene.add(cameraGroup);
-            
-            const originalPosition = camera.position.clone();
-            const shakeInterval = setInterval(() => {
-                camera.position.x = originalPosition.x + (Math.random() - 0.5) * intensity;
-                camera.position.y = originalPosition.y + (Math.random() - 0.5) * intensity;
-                camera.position.z = originalPosition.z + (Math.random() - 0.5) * intensity;
-            }, 50);
-            
-            setTimeout(() => {
-                clearInterval(shakeInterval);
-                camera.position.copy(originalPosition);
-                isShaking = false;
-                scene.remove(cameraGroup);
-            }, duration);
-        }
-
-        // --- Health Functions ---
-        function updateHeartsUI() {
-            document.getElementById('heart-count').innerText = playerHealth;
-        }
-
-        function takeDamage(amount, source = null) {
-            playerHealth = Math.max(0, playerHealth - amount);
-            lastDamageTime = Date.now();
-            
-            // Show notification (now always white)
-            if (source) {
-                showNotification(`Hit by ${source}! Health: ${playerHealth}/${maxHealth}`);
-            } else {
-                showNotification(`You took ${amount} damage! Health: ${playerHealth}/${maxHealth}`);
-            }
-            
-            // Screen shake
-            screenShake(0.3, 400);
-            
-            // Update UI
-            updateHeartsUI();
-            
-            // Reset regeneration timer
-            if (healthRegenTimer) {
-                clearTimeout(healthRegenTimer);
-                healthRegenTimer = null;
-            }
-            
-            // Start regeneration after 10 seconds
-            healthRegenTimer = setTimeout(startHealthRegeneration, 10000);
-            
-            // Check if dead
-            if (playerHealth <= 0) {
-                showNotification('You died!');
-                // Handle death (will be handled by server)
-            }
-        }
-
-        function startHealthRegeneration() {
-            if (playerHealth < maxHealth) {
-                playerHealth = Math.min(maxHealth, playerHealth + 1);
-                updateHeartsUI();
-                showNotification(`Healed! Health: ${playerHealth}/${maxHealth}`);
-                
-                if (playerHealth < maxHealth) {
-                    healthRegenTimer = setTimeout(startHealthRegeneration, 1000);
-                }
-            }
-        }
-
-        function resetHealth() {
-            playerHealth = maxHealth;
-            updateHeartsUI();
-            if (healthRegenTimer) {
-                clearTimeout(healthRegenTimer);
-                healthRegenTimer = null;
-            }
-        }
 
         // --- Fullscreen Functions ---
         function enterFullscreen() {
@@ -2089,8 +1937,7 @@
                     crouch: isCrouching,
                     selected: selectedSlotIndex,
                     spectator: isSpectator,
-                    equippedWeapon: equippedWeapon,
-                    health: playerHealth
+                    equippedWeapon: equippedWeapon
                 });
                 lastPlayerUpdate = time;
             }
@@ -2111,8 +1958,8 @@
                 }
                 data.group.scale.y = data.crouch ? 0.75 : 1;
                 
-                if (data.healthBar && playerHealths.has(id)) {
-                    const health = playerHealths.get(id);
+                if (data.healthBar && playerHealth.has(id)) {
+                    const health = playerHealth.get(id);
                     data.healthBar.style.width = `${health * 10}%`;
                     data.healthBar.style.backgroundColor = health > 5 ? '#4CAF50' : health > 2 ? '#FFA500' : '#FF0000';
                 }
@@ -2185,7 +2032,6 @@
             document.getElementById('iron').innerText = currency.iron;
             document.getElementById('gold').innerText = currency.gold;
             document.getElementById('emerald').innerText = currency.emerald;
-            document.getElementById('heart-count').innerText = playerHealth;
 
             hotbarContainer.innerHTML = '';
             for (let i = 0; i < INVENTORY_SIZE; i++) {
@@ -2242,77 +2088,40 @@
         function renderShop() {
             const container = document.getElementById('shop-container');
             container.innerHTML = '';
-            
-            // Group items by category
-            const categories = {
-                'Blocks': [],
-                'Weapons': [],
-                'Miscellaneous': []
-            };
-            
-            Object.entries(BLOCK_TYPES).forEach(([name, data]) => {
-                if (name === 'Bed') return;
+            Object.entries(BLOCK_TYPES).filter(([name]) => name !== 'Bed').forEach(([name, data]) => {
+                const item = document.createElement('div');
+                const affordable = canAfford(data.cost);
+                item.className = `shop-item ${affordable ? '' : 'disabled'}`;
                 
-                if (data.isWeapon) {
-                    categories['Weapons'].push({ name, data });
-                } else if (data.isItem) {
-                    categories['Miscellaneous'].push({ name, data });
-                } else {
-                    categories['Blocks'].push({ name, data });
-                }
-            });
-            
-            // Render each category
-            Object.entries(categories).forEach(([categoryName, items]) => {
-                if (items.length === 0) return;
+                let imageUrl = '';
+                if (name === 'Grass') imageUrl = TEXTURE_URLS.grass;
+                else if (name === 'Wood') imageUrl = TEXTURE_URLS.wood;
+                else if (name === 'Stone') imageUrl = TEXTURE_URLS.stone;
+                else if (name === 'Obsidian') imageUrl = TEXTURE_URLS.obsidian;
+                else if (name === 'Glass') imageUrl = '';
+                else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
+                else if (name === 'Fireball') imageUrl = TEXTURE_URLS.fireball;
+                else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
+                else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
+                else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
                 
-                const categoryDiv = document.createElement('div');
-                categoryDiv.className = 'shop-category';
+                const costText = Object.entries(data.cost)
+                    .map(([res, amt]) => `${amt} ${res}`)
+                    .join(' + ');
                 
-                const title = document.createElement('h3');
-                title.textContent = categoryName;
-                categoryDiv.appendChild(title);
-                
-                const grid = document.createElement('div');
-                grid.className = 'shop-grid';
-                
-                items.forEach(({ name, data }) => {
-                    const affordable = canAfford(data.cost);
-                    const item = document.createElement('div');
-                    item.className = `shop-item ${affordable ? '' : 'disabled'}`;
-                    
-                    let imageUrl = '';
-                    if (name === 'Grass') imageUrl = TEXTURE_URLS.grass;
-                    else if (name === 'Wood') imageUrl = TEXTURE_URLS.wood;
-                    else if (name === 'Stone') imageUrl = TEXTURE_URLS.stone;
-                    else if (name === 'Obsidian') imageUrl = TEXTURE_URLS.obsidian;
-                    else if (name === 'Enderpearl') imageUrl = TEXTURE_URLS.enderpearl;
-                    else if (name === 'Fireball') imageUrl = TEXTURE_URLS.fireball;
-                    else if (name === 'Wooden Sword') imageUrl = TEXTURE_URLS.woodenSword;
-                    else if (name === 'Iron Sword') imageUrl = TEXTURE_URLS.ironSword;
-                    else if (name === 'Emerald Sword') imageUrl = TEXTURE_URLS.emeraldSword;
-                    
-                    const costText = Object.entries(data.cost)
-                        .map(([res, amt]) => `${amt} ${res}`)
-                        .join(' + ');
-                    
-                    item.innerHTML = `
-                        ${imageUrl ? `<img src="${imageUrl}" class="shop-icon" alt="${name}">` : 
-                        `<div class="shop-icon" style="background:#${data.color.toString(16).padStart(6,'0')}; ${data.opacity ? `opacity:${data.opacity};` : ''}"></div>`}
-                        <strong>${name}</strong><br>
-                        <span style="font-size:0.9em; color:#aaa;">${data.buyAmount}x</span><br>
-                        <span style="color: ${affordable ? '#4d9043' : '#d32f2f'}">${costText}</span>
-                        ${data.isWeapon ? `<br><span style="color:#ff8888; font-size:0.8em;">Damage: ${data.damage}</span>` : ''}
-                    `;
-                    item.onclick = () => {
-                        wasBuying = true;
-                        socket.emit('buyAttempt', name);
-                    };
-                    grid.appendChild(item);
-                });
-                
-                categoryDiv.appendChild(grid);
-                container.appendChild(categoryDiv);
+                item.innerHTML = `
+                    ${imageUrl ? `<img src="${imageUrl}" class="shop-icon" alt="${name}">` : 
+                    `<div class="shop-icon" style="background:#${data.color.toString(16).padStart(6,'0')}; ${data.opacity ? `opacity:${data.opacity};` : ''}"></div>`}
+                    <strong>${name}</strong><br>
+                    <span style="font-size:0.9em; color:#aaa;">${data.buyAmount}x</span><br>
+                    <span style="color: ${affordable ? '#4d9043' : '#d32f2f'}">${costText}</span>
+                    ${data.isWeapon ? `<br><span style="color:#ff8888; font-size:0.8em;">Damage: ${data.damage}</span>` : ''}
+                `;
+                item.onclick = () => {
+                    wasBuying = true;
+                    socket.emit('buyAttempt', name);
+                };
+                container.appendChild(item);
             });
         }
 
@@ -2330,17 +2139,6 @@
                 controls.unlock();
                 renderShop();
             }
-        }
-
-        // Updated showNotification function - always white
-        function showNotification(msg, duration = 3000) {
-            const el = document.getElementById('notification');
-            el.innerText = msg;
-            el.style.color = 'white';
-            el.style.display = 'block';
-            setTimeout(() => {
-                el.style.display = 'none';
-            }, duration);
         }
 
         function getPlayerColor(id) {
@@ -2426,7 +2224,7 @@
                 equippedWeapon: equippedWeapon
             });
 
-            playerHealths.set(id, health);
+            playerHealth.set(id, health);
             
             if (equippedWeapon) {
                 updateOtherPlayerSword(id, equippedWeapon);
@@ -2436,7 +2234,7 @@
         }
 
         function updatePlayerHealth(id, health) {
-            playerHealths.set(id, health);
+            playerHealth.set(id, health);
             
             const op = otherPlayers.get(id);
             if (!op || !op.group) return;
@@ -2470,15 +2268,21 @@
             if (op) {
                 scene.remove(op.group);
                 otherPlayers.delete(id);
-                playerHealths.delete(id);
+                playerHealth.delete(id);
                 if (playerSwords.has(id)) {
                     playerSwords.delete(id);
                 }
             }
         }
 
-        // Initialize hearts UI
-        updateHeartsUI();
+        function showNotification(msg, duration = 3000) {
+            const el = document.getElementById('notification');
+            el.innerText = msg;
+            el.style.display = 'block';
+            setTimeout(() => {
+                el.style.display = 'none';
+            }, duration);
+        }
 
         // Socket events
         socket.on('yourId', (id) => {
@@ -2573,8 +2377,6 @@
                     } else {
                         op.group.visible = true;
                     }
-                    
-                    updatePlayerHealth(id, health || 10);
                 }
             });
         });
@@ -2681,17 +2483,16 @@
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
             camera.rotation.set(data.rot.pitch, data.rot.yaw, 0);
             velocity.set(0, 0, 0);
-            resetHealth();
         });
 
         socket.on('teleport', (data) => {
             camera.position.set(data.x, data.y, data.z);
             velocity.set(0, 0, 0);
-            showNotification('Teleported!');
+            showNotification('Teleported!', 1500);
         });
 
         socket.on('bedDestroyed', () => {
-            showNotification('Your bed was destroyed! You will not respawn!');
+            showNotification('Your bed was destroyed! You will not respawn!', 5000);
         });
 
         socket.on('notification', (msg) => {
@@ -2699,7 +2500,7 @@
         });
 
         socket.on('countdown', (sec) => {
-            showNotification(`Starting in ${sec}`);
+            showNotification(`Starting in ${sec}`, 1100);
             updateWaitingMessage(0);
         });
 
@@ -2710,7 +2511,7 @@
         });
 
         socket.on('assignBed', (data) => {
-            showNotification(`Assigned to Iron Island!`);
+            showNotification(`Assigned to Iron Island!`, 3000);
             setSpectatorMode(false);
             
             camera.position.set(data.pos.x, data.pos.y, data.pos.z);
@@ -2721,16 +2522,15 @@
             currency = data.currency;
             updateUI();
             updateSwordInHand();
-            resetHealth();
         });
 
         socket.on('gameEnd', ({ winner }) => {
             if (winner === playerId) {
-                showNotification('You Win!');
+                showNotification('You Win!', 5000);
             } else if (winner) {
-                showNotification(`Player ${winner.substring(0,6)} Wins!`);
+                showNotification(`Player ${winner.substring(0,6)} Wins!`, 5000);
             } else {
-                showNotification('Game ended with no winner!');
+                showNotification('Game ended with no winner!', 5000);
             }
             isInRound = false;
             stopRoundTimer();
@@ -2772,7 +2572,7 @@
                 scene.remove(op.group);
             });
             otherPlayers.clear();
-            playerHealths.clear();
+            playerHealth.clear();
             playerSwords.clear();
             
             breakingOverlays.forEach((data, key) => {
@@ -2799,7 +2599,7 @@
             });
             
             setSpectatorMode(true);
-            showNotification('Game reset! Waiting for players...');
+            showNotification('Game reset! Waiting for players...', 3000);
         });
 
         socket.on('playerReset', (data) => {
@@ -2810,7 +2610,6 @@
             updateUI();
             updateSwordInHand();
             velocity.set(0, 0, 0);
-            resetHealth();
         });
 
         socket.on('setSpectator', (spectator) => {
@@ -2832,43 +2631,24 @@
         });
 
         // Player combat events
-        socket.on('playerHit', ({ attackerId, targetId, newHealth, damage }) => {
+        socket.on('playerHit', ({ attackerId, targetId, newHealth }) => {
             updatePlayerHealth(targetId, newHealth);
             
             if (targetId === playerId && attackerId) {
-                takeDamage(damage, 'player');
-            }
-        });
-
-        socket.on('fireballHitPlayer', ({ attackerId, targetId, newHealth }) => {
-            updatePlayerHealth(targetId, newHealth);
-            
-            if (targetId === playerId && attackerId) {
-                takeDamage(6, 'fireball');
+                showNotification(`You were hit! Health: ${newHealth}/10`, 2000);
             }
         });
 
         socket.on('playerEliminated', ({ eliminatedId, eliminatorId }) => {
             if (eliminatedId === playerId) {
-                showNotification('You were eliminated!');
-                document.getElementById('heart-count').innerText = '0';
+                showNotification('You were eliminated!', 3000);
             } else if (eliminatorId === playerId) {
-                showNotification(`You eliminated ${eliminatedId.substring(0,6)}!`);
+                showNotification(`You eliminated ${eliminatedId.substring(0,6)}!`, 3000);
             } else {
-                showNotification(`${eliminatedId.substring(0,6)} was eliminated!`);
+                showNotification(`${eliminatedId.substring(0,6)} was eliminated!`, 3000);
             }
             
             removeOtherPlayer(eliminatedId);
-        });
-
-        // Health regeneration event
-        socket.on('healthRegenerated', ({ playerId: targetId, newHealth }) => {
-            if (targetId === playerId) {
-                playerHealth = newHealth;
-                updateHeartsUI();
-            } else {
-                updatePlayerHealth(targetId, newHealth);
-            }
         });
 
         // Start
