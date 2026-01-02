@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
-// Config - Updated with Axe and Pickaxe
+// Config - Updated with Wind Charge
 const BLOCK_TYPES = {
     'Grass': { color: 0x4d9043, cost: { iron: 5 }, breakTime: 1.2, buyAmount: 8, hasTexture: true },
     'Glass': { color: 0xade8f4, cost: { iron: 5 }, breakTime: 0.4, buyAmount: 16, opacity: 0.6 },
@@ -23,6 +23,7 @@ const BLOCK_TYPES = {
     'Bed': { color: 0xff0000, breakTime: 0.8, buyAmount: 1, hasTexture: false },
     'Enderpearl': { color: 0x00ff88, cost: { emerald: 2 }, buyAmount: 1, isItem: true, hasTexture: true },
     'Fireball': { color: 0xff5500, cost: { iron: 48 }, buyAmount: 1, isItem: true, hasTexture: true },
+    'Wind Charge': { color: 0x88ccff, cost: { gold: 24 }, buyAmount: 1, isItem: true, hasTexture: true },
     'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
     'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
     'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true },
@@ -43,6 +44,7 @@ const spawners = [];
 const players = new Map();
 const enderpearls = new Map();
 const fireballs = new Map();
+const windcharges = new Map();
 const breakingAnimations = new Map();
 const activeBreaking = new Map();
 
@@ -217,6 +219,7 @@ function initWorld() {
     spawners.length = 0;
     enderpearls.clear();
     fireballs.clear();
+    windcharges.clear();
     breakingAnimations.clear();
     activeBreaking.clear();
     
@@ -369,6 +372,7 @@ function resetGame() {
         p.equippedWeapon = null;
         p.lastEnderpearlThrow = 0;
         p.lastFireballThrow = 0;
+        p.lastWindchargeThrow = 0;
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -539,7 +543,8 @@ io.on('connection', (socket) => {
         lastHitTime: 0,
         equippedWeapon: null,
         lastEnderpearlThrow: 0,
-        lastFireballThrow: 0
+        lastFireballThrow: 0,
+        lastWindchargeThrow: 0
     };
     
     players.set(socket.id, playerState);
@@ -657,6 +662,14 @@ io.on('connection', (socket) => {
         const p = players.get(socket.id);
         if (p.spectator) return;
         
+        // Prevent placing items (tools, weapons, throwables)
+        const blockData = BLOCK_TYPES[type];
+        if (blockData && (blockData.isItem || blockData.isWeapon || blockData.isTool)) {
+            socket.emit('revertPlace', { x, y, z });
+            socket.emit('notification', 'Cannot place items! Use Q to drop them.');
+            return;
+        }
+        
         const key = blockKey(x, y, z);
         if (blocks.has(key)) {
             socket.emit('revertPlace', { x, y, z });
@@ -694,6 +707,33 @@ io.on('connection', (socket) => {
         }
         addBlock(x, y, z, type);
         socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+    });
+
+    // Q key - Drop item from inventory
+    socket.on('dropItem', () => {
+        const p = players.get(socket.id);
+        if (p.spectator || !p.inventory[p.selected]) return;
+        
+        const slot = p.inventory[p.selected];
+        if (!slot) return;
+        
+        // Remove one item from the slot
+        slot.count--;
+        
+        if (slot.count <= 0) {
+            p.inventory[p.selected] = null;
+            
+            // Clear equipped weapon if it was dropped
+            if (BLOCK_TYPES[slot.type] && BLOCK_TYPES[slot.type].isWeapon) {
+                p.equippedWeapon = null;
+            }
+        }
+        
+        // Emit inventory update
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        
+        // Emit notification
+        socket.emit('notification', `Dropped ${slot.type}`);
     });
 
     socket.on('buyAttempt', (btype) => {
@@ -764,12 +804,11 @@ io.on('connection', (socket) => {
         target.health -= damage;
         attacker.lastHitTime = now;
         
-        const knockback = 0.5;
-        const dirX = dx / dist;
-        const dirZ = dz / dist;
-        
-        target.pos.x -= dirX * knockback;
-        target.pos.z -= dirZ * knockback;
+        // Emit screen shake for the target only
+        io.to(targetId).emit('screenShake', {
+            intensity: 0.4,
+            duration: 0.6
+        });
         
         io.emit('playerHit', {
             attackerId: attacker.id,
@@ -867,8 +906,6 @@ io.on('connection', (socket) => {
         
         enderpearls.set(pearlId, pearl);
         
-        console.log(`Enderpearl thrown by ${socket.id}, ID: ${pearlId}, Velocity:`, velocity);
-        
         io.emit('addEnderpearl', {
             id: pearl.id,
             x: startPos.x,
@@ -939,10 +976,78 @@ io.on('connection', (socket) => {
         
         fireballs.set(fireballId, fireball);
         
-        console.log(`Fireball thrown by ${socket.id}, ID: ${fireballId}`);
-        
         io.emit('addFireball', {
             id: fireball.id,
+            x: startPos.x,
+            y: startPos.y,
+            z: startPos.z,
+            velocity: velocity,
+            owner: socket.id
+        });
+    });
+
+    socket.on('throwWindcharge', (targetPos) => {
+        const p = players.get(socket.id);
+        if (p.spectator) return;
+        
+        const slot = p.inventory[p.selected];
+        if (!slot || slot.type !== 'Wind Charge' || slot.count < 1) {
+            socket.emit('notification', 'No Wind Charge in selected slot!');
+            return;
+        }
+        
+        const now = Date.now();
+        if (now - p.lastWindchargeThrow < 100) {
+            socket.emit('notification', 'Wind Charge cooldown!');
+            return;
+        }
+        
+        slot.count--;
+        if (slot.count === 0) {
+            p.inventory[p.selected] = null;
+        }
+        
+        p.lastWindchargeThrow = now;
+        
+        socket.emit('updateInventory', p.inventory.map(slot => slot ? { ...slot } : null));
+        
+        const windchargeId = `windcharge-${socket.id}-${now}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        const startPos = {
+            x: p.pos.x,
+            y: p.pos.y,
+            z: p.pos.z
+        };
+        
+        const direction = {
+            x: targetPos.x - startPos.x,
+            y: targetPos.y - startPos.y,
+            z: targetPos.z - startPos.z
+        };
+        
+        const length = Math.sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        const speed = 22;
+        const velocity = {
+            x: (direction.x / length) * speed,
+            y: (direction.y / length) * speed,
+            z: (direction.z / length) * speed
+        };
+        
+        const windcharge = {
+            id: windchargeId,
+            owner: socket.id,
+            pos: startPos,
+            velocity: velocity,
+            createdAt: now,
+            lastUpdate: now,
+            arrived: false,
+            hit: false
+        };
+        
+        windcharges.set(windchargeId, windcharge);
+        
+        io.emit('addWindcharge', {
+            id: windcharge.id,
             x: startPos.x,
             y: startPos.y,
             z: startPos.z,
@@ -993,6 +1098,55 @@ io.on('connection', (socket) => {
         
         fireballs.delete(fireballId);
         io.emit('removeFireball', fireballId);
+    });
+
+    socket.on('windchargeHitPlayer', ({ windchargeId, targetId }) => {
+        const windcharge = windcharges.get(windchargeId);
+        const target = players.get(targetId);
+        
+        if (!windcharge || !target || target.spectator) return;
+        
+        // Apply 4 block knockback
+        const knockbackDistance = 4;
+        const direction = {
+            x: target.pos.x - windcharge.pos.x,
+            y: 0,
+            z: target.pos.z - windcharge.pos.z
+        };
+        
+        const length = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+        if (length > 0) {
+            const normalizedDir = {
+                x: direction.x / length,
+                y: direction.y / length,
+                z: direction.z / length
+            };
+            
+            target.pos.x += normalizedDir.x * knockbackDistance;
+            target.pos.z += normalizedDir.z * knockbackDistance;
+            
+            // Add a bit of vertical knockback
+            target.pos.y += 1;
+            
+            // Emit screen shake for the target
+            io.to(targetId).emit('screenShake', {
+                intensity: 0.6,
+                duration: 0.8
+            });
+            
+            io.to(targetId).emit('notification', 'Knocked back by Wind Charge!');
+            
+            // Emit to all players for visual effect
+            io.emit('windchargeExplosion', {
+                x: windcharge.pos.x,
+                y: windcharge.pos.y,
+                z: windcharge.pos.z,
+                targetId: targetId
+            });
+        }
+        
+        windcharges.delete(windchargeId);
+        io.emit('removeWindcharge', windchargeId);
     });
 
     socket.on('startBreaking', ({ x, y, z, breakTime }) => {
@@ -1130,6 +1284,7 @@ setInterval(() => {
             suddenDeath = true;
         }
 
+        // Enderpearl updates
         const pearlUpdates = [];
         const pearlRemovals = [];
         
@@ -1207,9 +1362,9 @@ setInterval(() => {
         pearlRemovals.forEach(id => {
             enderpearls.delete(id);
             io.emit('removeEnderpearl', id);
-            console.log(`Enderpearl ${id} removed (hit or timeout)`);
         });
 
+        // Fireball updates
         const fireballUpdates = [];
         const fireballRemovals = [];
         
@@ -1326,6 +1481,127 @@ setInterval(() => {
         fireballRemovals.forEach(id => {
             fireballs.delete(id);
             io.emit('removeFireball', id);
+        });
+
+        // Wind Charge updates
+        const windchargeUpdates = [];
+        const windchargeRemovals = [];
+        
+        windcharges.forEach((windcharge, id) => {
+            if (windcharge.arrived || windcharge.hit) return;
+            
+            const deltaTime = (now - windcharge.lastUpdate) / 1000;
+            windcharge.lastUpdate = now;
+            
+            const prevPos = { ...windcharge.pos };
+            
+            const GRAVITY = 8;
+            windcharge.velocity.y -= GRAVITY * deltaTime;
+            
+            windcharge.pos.x += windcharge.velocity.x * deltaTime;
+            windcharge.pos.y += windcharge.velocity.y * deltaTime;
+            windcharge.pos.z += windcharge.velocity.z * deltaTime;
+            
+            const dx = windcharge.pos.x - prevPos.x;
+            const dy = windcharge.pos.y - prevPos.y;
+            const dz = windcharge.pos.z - prevPos.z;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            
+            if (distance > 0) {
+                // Check for player collisions
+                let hitPlayer = null;
+                let closestDistance = 1.5; // Hit radius
+                
+                players.forEach((player, playerId) => {
+                    if (player.spectator || playerId === windcharge.owner) return;
+                    
+                    const playerDist = Math.sqrt(
+                        Math.pow(windcharge.pos.x - player.pos.x, 2) +
+                        Math.pow(windcharge.pos.y - player.pos.y, 2) +
+                        Math.pow(windcharge.pos.z - player.pos.z, 2)
+                    );
+                    
+                    if (playerDist < closestDistance) {
+                        closestDistance = playerDist;
+                        hitPlayer = playerId;
+                    }
+                });
+                
+                if (hitPlayer) {
+                    windcharge.hit = true;
+                    io.emit('windchargeHitPlayer', {
+                        windchargeId: id,
+                        targetId: hitPlayer
+                    });
+                    windcharge.arrived = true;
+                    windchargeRemovals.push(id);
+                } else {
+                    // Check for block collisions
+                    const steps = Math.ceil(distance * 2);
+                    let hitBlock = null;
+                    
+                    for (let i = 0; i <= steps; i++) {
+                        const t = i / steps;
+                        const checkX = prevPos.x + dx * t;
+                        const checkY = prevPos.y + dy * t;
+                        const checkZ = prevPos.z + dz * t;
+                        
+                        const blockX = Math.floor(checkX);
+                        const blockY = Math.floor(checkY);
+                        const blockZ = Math.floor(checkZ);
+                        const blockKeyStr = blockKey(blockX, blockY, blockZ);
+                        
+                        if (blocks.has(blockKeyStr)) {
+                            hitBlock = { x: blockX, y: blockY, z: blockZ };
+                            break;
+                        }
+                    }
+                    
+                    if (hitBlock) {
+                        windcharge.hit = true;
+                        
+                        // Wind Charge doesn't destroy blocks, just creates a wind effect
+                        io.emit('windchargeExplosion', {
+                            x: hitBlock.x,
+                            y: hitBlock.y,
+                            z: hitBlock.z,
+                            targetId: null
+                        });
+                        
+                        windcharge.arrived = true;
+                        windchargeRemovals.push(id);
+                    } else if (windcharge.pos.y < -30 || now - windcharge.createdAt > 10000) {
+                        windcharge.arrived = true;
+                        windchargeRemovals.push(id);
+                    } else {
+                        windchargeUpdates.push({
+                            id: windcharge.id,
+                            x: windcharge.pos.x,
+                            y: windcharge.pos.y,
+                            z: windcharge.pos.z
+                        });
+                    }
+                }
+            } else if (windcharge.pos.y < -30 || now - windcharge.createdAt > 10000) {
+                windcharge.arrived = true;
+                windchargeRemovals.push(id);
+            } else {
+                windchargeUpdates.push({
+                    id: windcharge.id,
+                    x: windcharge.pos.x,
+                    y: windcharge.pos.y,
+                    z: windcharge.pos.z
+                });
+            }
+        });
+        
+        if (windchargeUpdates.length > 0) {
+            io.emit('updateWindcharge', windchargeUpdates);
+        }
+        
+        windchargeRemovals.forEach(id => {
+            windcharges.delete(id);
+            io.emit('removeWindcharge', id);
         });
 
         const breakingAnimationsToRemove = [];
