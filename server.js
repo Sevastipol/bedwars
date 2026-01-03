@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -291,16 +290,10 @@ function checkWinCondition() {
     const activePlayers = getActivePlayers();
     console.log(`Checking win condition. Active players: ${activePlayers.length}`);
     
-    if (activePlayers.length === 1) {
-        const winnerId = activePlayers[0].id;
+    if (activePlayers.length <= 1) {
+        const winnerId = activePlayers.length === 1 ? activePlayers[0].id : null;
         console.log(`Win condition met! Winner: ${winnerId}`);
         endGame(winnerId);
-        return true;
-    }
-    
-    if (activePlayers.length === 0) {
-        console.log('No active players left. Ending game.');
-        endGame(null);
         return true;
     }
     
@@ -806,7 +799,7 @@ io.on('connection', (socket) => {
         target.health -= damage;
         attacker.lastHitTime = now;
         
-        // Apply knockback
+        // Apply knockback - fists and all weapons have knockback
         const knockbackForce = 1.5;
         const knockbackX = (dx / dist) * knockbackForce;
         const knockbackY = 0.5;
@@ -1219,17 +1212,14 @@ io.on('connection', (socket) => {
                 players.delete(socket.id);
                 io.emit('removePlayer', socket.id);
                 
-                // Only end game if there's 1 player left
+                // Check if we should end the game immediately
                 const activePlayers = getActivePlayers();
                 console.log(`Active players after disconnect: ${activePlayers.length}`);
                 
-                if (activePlayers.length === 1) {
-                    const winnerId = activePlayers[0].id;
-                    console.log(`Only 1 player left. Winner: ${winnerId}`);
+                if (activePlayers.length <= 1) {
+                    const winnerId = activePlayers.length === 1 ? activePlayers[0].id : null;
+                    console.log(`Only ${activePlayers.length} player(s) left. Winner: ${winnerId}`);
                     endGame(winnerId);
-                } else if (activePlayers.length === 0) {
-                    console.log('No active players left.');
-                    endGame(null);
                 }
             } else {
                 // Player was spectator or game not active
@@ -1782,6 +1772,7 @@ setInterval(() => {
             }
         });
         
+        // Check win condition regularly
         if (Math.random() < 0.1) {
             checkWinCondition();
         }
