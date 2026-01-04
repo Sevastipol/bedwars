@@ -356,6 +356,7 @@ function resetGame() {
         p.lastEnderpearlThrow = 0;
         p.lastFireballThrow = 0;
         p.lastWindchargeThrow = 0;
+        p.knockbackVelocity = { x: 0, y: 0, z: 0 };
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -509,7 +510,7 @@ function processBlockBreak(playerId, x, y, z) {
     return false;
 }
 
-// ==================== REFACTORED KNOCKBACK SYSTEM ====================
+// ==================== IMPROVED KNOCKBACK SYSTEM ====================
 
 function applyKnockback(target, sourcePos, force, upwardBoost = 0.3) {
     // Calculate direction from source to target
@@ -520,17 +521,21 @@ function applyKnockback(target, sourcePos, force, upwardBoost = 0.3) {
     // Calculate distance
     const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
     
-    if (distance === 0) return; // Prevent division by zero
+    if (distance === 0) {
+        // If players are exactly at same position, push in random direction
+        const randomAngle = Math.random() * Math.PI * 2;
+        target.knockbackVelocity.x = Math.cos(randomAngle) * force;
+        target.knockbackVelocity.z = Math.sin(randomAngle) * force;
+        target.knockbackVelocity.y = upwardBoost * force;
+    } else {
+        // Normalize direction and apply force
+        target.knockbackVelocity.x = (dx / distance) * force;
+        target.knockbackVelocity.y = Math.max((dy / distance) * force * 0.5, upwardBoost);
+        target.knockbackVelocity.z = (dz / distance) * force;
+    }
     
-    // Normalize direction and apply force
-    const normalizedX = dx / distance;
-    const normalizedY = dy / distance;
-    const normalizedZ = dz / distance;
-    
-    // Apply knockback with upward boost
-    target.pos.x += normalizedX * force;
-    target.pos.y += Math.max(normalizedY * force * 0.5, upwardBoost); // Ensure some upward motion
-    target.pos.z += normalizedZ * force;
+    // Set last knockback time
+    target.lastKnockback = Date.now();
 }
 
 function applyExplosionKnockback(target, explosionPos, radius, force) {
@@ -546,17 +551,71 @@ function applyExplosionKnockback(target, explosionPos, radius, force) {
     const actualForce = force * distanceFactor;
     
     // Normalize direction
-    const normalizedX = dx / distance;
-    const normalizedY = dy / distance;
-    const normalizedZ = dz / distance;
+    if (distance > 0) {
+        target.knockbackVelocity.x += (dx / distance) * actualForce;
+        target.knockbackVelocity.y += Math.max((dy / distance) * actualForce * 0.3, 0.2);
+        target.knockbackVelocity.z += (dz / distance) * actualForce;
+    } else {
+        // Direct hit, push upward
+        target.knockbackVelocity.y += actualForce;
+    }
     
-    // Apply knockback with upward boost for explosions
-    target.pos.x += normalizedX * actualForce;
-    target.pos.y += Math.max(normalizedY * actualForce * 0.3, 0.2); // Upward boost for explosions
-    target.pos.z += normalizedZ * actualForce;
+    // Set last knockback time
+    target.lastKnockback = Date.now();
 }
 
-// ==================== END REFACTORED KNOCKBACK SYSTEM ====================
+function applyDirectKnockback(target, projectilePos, force, upwardBoost = 0.5) {
+    const dx = target.pos.x - projectilePos.x;
+    const dz = target.pos.z - projectilePos.z;
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+    
+    if (horizontalDistance === 0) {
+        // Direct hit from above/below, push in random horizontal direction
+        const randomAngle = Math.random() * Math.PI * 2;
+        target.knockbackVelocity.x = Math.cos(randomAngle) * force;
+        target.knockbackVelocity.z = Math.sin(randomAngle) * force;
+        target.knockbackVelocity.y = upwardBoost * force;
+    } else {
+        // Normalize horizontal direction
+        target.knockbackVelocity.x = (dx / horizontalDistance) * force;
+        target.knockbackVelocity.z = (dz / horizontalDistance) * force;
+        target.knockbackVelocity.y = upwardBoost * force;
+    }
+    
+    // Set last knockback time
+    target.lastKnockback = Date.now();
+}
+
+// Update player positions with knockback
+function updatePlayerPositions() {
+    players.forEach((player, playerId) => {
+        if (player.spectator || !player.knockbackVelocity) return;
+        
+        const now = Date.now();
+        
+        // Apply knockback velocity
+        const knockbackDecay = 0.95; // Slows down over time
+        const timeFactor = 0.016; // ~60 FPS
+        
+        player.pos.x += player.knockbackVelocity.x * timeFactor;
+        player.pos.y += player.knockbackVelocity.y * timeFactor;
+        player.pos.z += player.knockbackVelocity.z * timeFactor;
+        
+        // Decay knockback velocity
+        player.knockbackVelocity.x *= knockbackDecay;
+        player.knockbackVelocity.y *= knockbackDecay;
+        player.knockbackVelocity.z *= knockbackDecay;
+        
+        // Reset if velocity is very small
+        if (Math.abs(player.knockbackVelocity.x) < 0.01 && 
+            Math.abs(player.knockbackVelocity.y) < 0.01 && 
+            Math.abs(player.knockbackVelocity.z) < 0.01) {
+            player.knockbackVelocity = { x: 0, y: 0, z: 0 };
+        }
+    });
+}
+
+// ==================== END IMPROVED KNOCKBACK SYSTEM ====================
 
 // Socket connections
 io.on('connection', (socket) => {
@@ -578,7 +637,9 @@ io.on('connection', (socket) => {
         equippedWeapon: null,
         lastEnderpearlThrow: 0,
         lastFireballThrow: 0,
-        lastWindchargeThrow: 0
+        lastWindchargeThrow: 0,
+        knockbackVelocity: { x: 0, y: 0, z: 0 },
+        lastKnockback: 0
     };
     
     players.set(socket.id, playerState);
@@ -638,12 +699,58 @@ io.on('connection', (socket) => {
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
         if (p) {
+            // Store previous position
+            const oldPos = { ...p.pos };
+            
+            // Update position
             p.pos = data.pos;
             p.rot = data.rot;
             p.crouch = data.crouch;
             p.selected = data.selected;
             p.spectator = data.spectator;
             p.equippedWeapon = data.equippedWeapon;
+            
+            // Check for collision with blocks
+            const playerFeetY = p.pos.y - (p.crouch ? 1.3 : 1.6);
+            const playerHeight = p.crouch ? 1.0 : 1.8;
+            const playerRadius = 0.4;
+            
+            // Simple collision check
+            let collision = false;
+            for (let x = Math.floor(p.pos.x - playerRadius); x <= Math.floor(p.pos.x + playerRadius); x++) {
+                for (let y = Math.floor(playerFeetY); y <= Math.floor(playerFeetY + playerHeight); y++) {
+                    for (let z = Math.floor(p.pos.z - playerRadius); z <= Math.floor(p.pos.z + playerRadius); z++) {
+                        if (blocks.has(blockKey(x, y, z))) {
+                            collision = true;
+                            
+                            // Push player out of the block
+                            if (p.pos.x < x + 0.5) {
+                                p.pos.x = x - playerRadius;
+                            } else {
+                                p.pos.x = x + 1 + playerRadius;
+                            }
+                            
+                            // Also stop knockback in that direction
+                            if (p.knockbackVelocity) {
+                                if (Math.abs(p.knockbackVelocity.x) > Math.abs(p.knockbackVelocity.z)) {
+                                    p.knockbackVelocity.x *= -0.3; // Bounce off
+                                } else {
+                                    p.knockbackVelocity.z *= -0.3; // Bounce off
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If collision occurred, update client position
+            if (collision && (oldPos.x !== p.pos.x || oldPos.y !== p.pos.y || oldPos.z !== p.pos.z)) {
+                socket.emit('teleport', {
+                    x: p.pos.x,
+                    y: p.pos.y,
+                    z: p.pos.z
+                });
+            }
         }
     });
 
@@ -838,7 +945,7 @@ io.on('connection', (socket) => {
         target.health -= damage;
         attacker.lastHitTime = now;
         
-        // ===== REFACTORED KNOCKBACK =====
+        // Apply knockback
         applyKnockback(target, attacker.pos, 1.5);
         
         io.emit('playerHit', {
@@ -858,6 +965,7 @@ io.on('connection', (socket) => {
                 target.pos.z = target.bedPos.z + 0.5;
                 target.rot.yaw = 0;
                 target.rot.pitch = 0;
+                target.knockbackVelocity = { x: 0, y: 0, z: 0 }; // Reset knockback
                 
                 io.to(targetId).emit('respawn', { 
                     pos: target.pos, 
@@ -1267,6 +1375,9 @@ io.on('connection', (socket) => {
 setInterval(() => {
     const now = Date.now();
     
+    // Update player positions with knockback
+    updatePlayerPositions();
+    
     if (gameActive) {
         spawners.forEach((s) => {
             if (now - s.lastSpawn >= s.interval) {
@@ -1331,6 +1442,7 @@ setInterval(() => {
                     player.pos.x = safePos.x;
                     player.pos.y = teleportY;
                     player.pos.z = safePos.z;
+                    player.knockbackVelocity = { x: 0, y: 0, z: 0 }; // Reset knockback when teleporting
                     
                     io.to(pearl.owner).emit('teleport', {
                         x: player.pos.x,
@@ -1365,7 +1477,7 @@ setInterval(() => {
             io.emit('removeEnderpearl', id);
         });
 
-        // Fireball updates
+        // Fireball updates - Direct hit does 6 damage
         const fireballUpdates = [];
         const fireballRemovals = [];
         
@@ -1384,9 +1496,9 @@ setInterval(() => {
             fireball.pos.y += fireball.velocity.y * deltaTime;
             fireball.pos.z += fireball.velocity.z * deltaTime;
             
-            // Check for direct player hit first
+            // Check for direct player hit
             let directHitPlayer = null;
-            const HIT_RADIUS = 1.2; // Increased hit radius for better direct hits
+            let closestDistance = 0.8; // Hit radius for direct hit
             
             players.forEach((player, playerId) => {
                 if (player.spectator || playerId === fireball.owner) return;
@@ -1396,17 +1508,18 @@ setInterval(() => {
                 const dz = fireball.pos.z - player.pos.z;
                 const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
                 
-                if (distance < HIT_RADIUS) {
+                if (distance < closestDistance) {
+                    closestDistance = distance;
                     directHitPlayer = { id: playerId, player: player };
                 }
             });
             
             if (directHitPlayer) {
-                // DIRECT FIREBALL HIT - DEAL 6 DAMAGE
+                // Direct hit - deal 6 damage
                 directHitPlayer.player.health -= 6;
                 
-                // Apply knockback from direct hit
-                applyKnockback(directHitPlayer.player, fireball.pos, 4, 0.6);
+                // Apply strong knockback from direct hit (4 blocks)
+                applyDirectKnockback(directHitPlayer.player, fireball.pos, 4, 0.8);
                 
                 io.emit('playerHit', {
                     attackerId: fireball.owner,
@@ -1454,7 +1567,7 @@ setInterval(() => {
                     }
                 }
                 
-                // Apply explosion knockback to nearby players
+                // Apply explosion knockback to nearby players (including the direct hit player)
                 const explosionPos = { x: explosionX + 0.5, y: explosionY + 0.5, z: explosionZ + 0.5 };
                 const explosionRadius = 3;
                 const explosionForce = 3;
@@ -1462,8 +1575,9 @@ setInterval(() => {
                 players.forEach((player, playerId) => {
                     if (player.spectator) return;
                     
+                    applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
+                    
                     if (playerId !== directHitPlayer.id) {
-                        applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
                         io.to(playerId).emit('notification', 'Knocked back by fireball!');
                     }
                 });
@@ -1478,89 +1592,99 @@ setInterval(() => {
                 fireball.hit = true;
                 fireball.arrived = true;
                 fireballRemovals.push(id);
-                return;
-            }
-            
-            // No direct hit, check for block collision
-            const dx = fireball.pos.x - prevPos.x;
-            const dy = fireball.pos.y - prevPos.y;
-            const dz = fireball.pos.z - prevPos.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            if (distance > 0) {
-                const steps = Math.ceil(distance * 2);
-                let hitBlock = null;
+            } else {
+                // No direct hit, check for block collision
+                const dx = fireball.pos.x - prevPos.x;
+                const dy = fireball.pos.y - prevPos.y;
+                const dz = fireball.pos.z - prevPos.z;
+                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
                 
-                for (let i = 0; i <= steps; i++) {
-                    const t = i / steps;
-                    const checkX = prevPos.x + dx * t;
-                    const checkY = prevPos.y + dy * t;
-                    const checkZ = prevPos.z + dz * t;
+                if (distance > 0) {
+                    const steps = Math.ceil(distance * 2);
+                    let hitBlock = null;
                     
-                    const blockX = Math.floor(checkX);
-                    const blockY = Math.floor(checkY);
-                    const blockZ = Math.floor(checkZ);
-                    const blockKeyStr = blockKey(blockX, blockY, blockZ);
-                    
-                    if (blocks.has(blockKeyStr)) {
-                        hitBlock = { x: blockX, y: blockY, z: blockZ };
-                        break;
-                    }
-                }
-                
-                if (hitBlock) {
-                    fireball.hit = true;
-                    
-                    // Regular fireball explosion (no damage, just knockback)
-                    const explosionPos = { x: hitBlock.x + 0.5, y: hitBlock.y + 0.5, z: hitBlock.z + 0.5 };
-                    const explosionRadius = 3;
-                    const explosionForce = 3;
-                    
-                    players.forEach((player, playerId) => {
-                        if (player.spectator) return;
+                    for (let i = 0; i <= steps; i++) {
+                        const t = i / steps;
+                        const checkX = prevPos.x + dx * t;
+                        const checkY = prevPos.y + dy * t;
+                        const checkZ = prevPos.z + dz * t;
                         
-                        applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
-                        io.to(playerId).emit('notification', 'Knocked back by fireball!');
-                    });
-                    
-                    const blocksDestroyed = [];
-                    for (let dx = -1; dx <= 1; dx++) {
-                        for (let dy = -1; dy <= 1; dy++) {
-                            for (let dz = -1; dz <= 1; dz++) {
-                                const x = hitBlock.x + dx;
-                                const y = hitBlock.y + dy;
-                                const z = hitBlock.z + dz;
-                                const key = blockKey(x, y, z);
-                                
-                                if (blocks.has(key)) {
-                                    const blockType = blocks.get(key);
-                                    
-                                    if (blockType === 'Bed') {
-                                        const player = players.get(fireball.owner);
-                                        if (player && player.bedPos && 
-                                            player.bedPos.x === x && 
-                                            player.bedPos.y === y && 
-                                            player.bedPos.z === z) {
-                                            continue;
-                                        }
-                                    }
-                                    
-                                    removeBlock(x, y, z);
-                                    blocksDestroyed.push({ x, y, z, type: blockType });
-                                }
-                            }
+                        const blockX = Math.floor(checkX);
+                        const blockY = Math.floor(checkY);
+                        const blockZ = Math.floor(checkZ);
+                        const blockKeyStr = blockKey(blockX, blockY, blockZ);
+                        
+                        if (blocks.has(blockKeyStr)) {
+                            hitBlock = { x: blockX, y: blockY, z: blockZ };
+                            break;
                         }
                     }
                     
-                    io.emit('fireballExplosion', {
-                        x: hitBlock.x,
-                        y: hitBlock.y,
-                        z: hitBlock.z,
-                        blocksDestroyed: blocksDestroyed
-                    });
-                    
-                    fireball.arrived = true;
-                    fireballRemovals.push(id);
+                    if (hitBlock) {
+                        fireball.hit = true;
+                        
+                        // Fireball explosion deals 0 damage, just knocks back players
+                        const explosionPos = { x: hitBlock.x + 0.5, y: hitBlock.y + 0.5, z: hitBlock.z + 0.5 };
+                        const explosionRadius = 3;
+                        const explosionForce = 3;
+                        
+                        players.forEach((player, playerId) => {
+                            if (player.spectator || playerId === fireball.owner) return;
+                            
+                            applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
+                            
+                            io.to(playerId).emit('notification', 'Knocked back by fireball!');
+                        });
+                        
+                        const blocksDestroyed = [];
+                        for (let dx = -1; dx <= 1; dx++) {
+                            for (let dy = -1; dy <= 1; dy++) {
+                                for (let dz = -1; dz <= 1; dz++) {
+                                    const x = hitBlock.x + dx;
+                                    const y = hitBlock.y + dy;
+                                    const z = hitBlock.z + dz;
+                                    const key = blockKey(x, y, z);
+                                    
+                                    if (blocks.has(key)) {
+                                        const blockType = blocks.get(key);
+                                        
+                                        if (blockType === 'Bed') {
+                                            const player = players.get(fireball.owner);
+                                            if (player && player.bedPos && 
+                                                player.bedPos.x === x && 
+                                                player.bedPos.y === y && 
+                                                player.bedPos.z === z) {
+                                                continue;
+                                            }
+                                        }
+                                        
+                                        removeBlock(x, y, z);
+                                        blocksDestroyed.push({ x, y, z, type: blockType });
+                                    }
+                                }
+                            }
+                        }
+                        
+                        io.emit('fireballExplosion', {
+                            x: hitBlock.x,
+                            y: hitBlock.y,
+                            z: hitBlock.z,
+                            blocksDestroyed: blocksDestroyed
+                        });
+                        
+                        fireball.arrived = true;
+                        fireballRemovals.push(id);
+                    } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
+                        fireball.arrived = true;
+                        fireballRemovals.push(id);
+                    } else {
+                        fireballUpdates.push({
+                            id: fireball.id,
+                            x: fireball.pos.x,
+                            y: fireball.pos.y,
+                            z: fireball.pos.z
+                        });
+                    }
                 } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
                     fireball.arrived = true;
                     fireballRemovals.push(id);
@@ -1572,16 +1696,6 @@ setInterval(() => {
                         z: fireball.pos.z
                     });
                 }
-            } else if (fireball.pos.y < -30 || now - fireball.createdAt > 10000) {
-                fireball.arrived = true;
-                fireballRemovals.push(id);
-            } else {
-                fireballUpdates.push({
-                    id: fireball.id,
-                    x: fireball.pos.x,
-                    y: fireball.pos.y,
-                    z: fireball.pos.z
-                });
             }
         });
         
@@ -1594,7 +1708,7 @@ setInterval(() => {
             io.emit('removeFireball', id);
         });
 
-        // Wind Charge updates
+        // Wind Charge updates - Minecraft style (knockback only, no damage)
         const windchargeUpdates = [];
         const windchargeRemovals = [];
         
@@ -1615,7 +1729,7 @@ setInterval(() => {
             
             // Check for direct player hit first
             let directHitPlayer = null;
-            const HIT_RADIUS = 1.0; // Hit radius for wind charge
+            let closestDistance = 0.6; // Hit radius for direct hit
             
             players.forEach((player, playerId) => {
                 if (player.spectator || playerId === windcharge.owner) return;
@@ -1625,100 +1739,98 @@ setInterval(() => {
                 const dz = windcharge.pos.z - player.pos.z;
                 const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
                 
-                if (distance < HIT_RADIUS) {
+                if (distance < closestDistance) {
+                    closestDistance = distance;
                     directHitPlayer = { id: playerId, player: player };
                 }
             });
             
             if (directHitPlayer) {
-                // DIRECT WIND CHARGE HIT - 2x KNOCKBACK (NO DAMAGE)
-                // Apply 2x knockback from direct hit
-                applyKnockback(directHitPlayer.player, windcharge.pos, 8, 0.8); // 2x normal knockback
+                windcharge.hit = true;
                 
-                io.to(directHitPlayer.id).emit('notification', 'Direct wind charge hit! 2x knockback!');
+                // Direct hit - push 8 blocks
+                applyDirectKnockback(directHitPlayer.player, windcharge.pos, 8, 1.2);
                 
-                // Create explosion at hit location
-                const explosionPos = { x: windcharge.pos.x, y: windcharge.pos.y, z: windcharge.pos.z };
-                const explosionRadius = 4;
-                const explosionForce = 6; // 2x normal knockback for nearby players too
-                
-                players.forEach((player, playerId) => {
-                    if (player.spectator) return;
-                    
-                    if (playerId !== directHitPlayer.id) {
-                        applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
-                        io.to(playerId).emit('notification', 'Knocked back by wind charge!');
-                    }
-                });
+                io.to(directHitPlayer.id).emit('notification', 'Direct wind charge hit! Pushed 8 blocks');
+                io.to(windcharge.owner).emit('notification', 'Direct wind charge hit!');
                 
                 // Visual explosion effect
-                const explosionX = Math.floor(windcharge.pos.x);
-                const explosionY = Math.floor(windcharge.pos.y);
-                const explosionZ = Math.floor(windcharge.pos.z);
-                
                 io.emit('windchargeExplosion', {
-                    x: explosionX,
-                    y: explosionY,
-                    z: explosionZ
+                    x: Math.floor(windcharge.pos.x),
+                    y: Math.floor(windcharge.pos.y),
+                    z: Math.floor(windcharge.pos.z)
                 });
                 
-                windcharge.hit = true;
                 windcharge.arrived = true;
                 windchargeRemovals.push(id);
-                return;
-            }
-            
-            // No direct hit, check for block collision
-            const dx = windcharge.pos.x - prevPos.x;
-            const dy = windcharge.pos.y - prevPos.y;
-            const dz = windcharge.pos.z - prevPos.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            if (distance > 0) {
-                const steps = Math.ceil(distance * 2);
-                let hitBlock = null;
+            } else {
+                // Check for block collisions
+                const dx = windcharge.pos.x - prevPos.x;
+                const dy = windcharge.pos.y - prevPos.y;
+                const dz = windcharge.pos.z - prevPos.z;
+                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
                 
-                for (let i = 0; i <= steps; i++) {
-                    const t = i / steps;
-                    const checkX = prevPos.x + dx * t;
-                    const checkY = prevPos.y + dy * t;
-                    const checkZ = prevPos.z + dz * t;
+                if (distance > 0) {
+                    const steps = Math.ceil(distance * 2);
+                    let hitBlock = null;
                     
-                    const blockX = Math.floor(checkX);
-                    const blockY = Math.floor(checkY);
-                    const blockZ = Math.floor(checkZ);
-                    const blockKeyStr = blockKey(blockX, blockY, blockZ);
-                    
-                    if (blocks.has(blockKeyStr)) {
-                        hitBlock = { x: blockX, y: blockY, z: blockZ };
-                        break;
-                    }
-                }
-                
-                if (hitBlock) {
-                    windcharge.hit = true;
-                    
-                    // Regular wind charge explosion (no damage, normal knockback)
-                    const explosionPos = { x: hitBlock.x + 0.5, y: hitBlock.y + 0.5, z: hitBlock.z + 0.5 };
-                    const explosionRadius = 4;
-                    const explosionForce = 3; // Normal knockback
-                    
-                    players.forEach((player, playerId) => {
-                        if (player.spectator) return;
+                    for (let i = 0; i <= steps; i++) {
+                        const t = i / steps;
+                        const checkX = prevPos.x + dx * t;
+                        const checkY = prevPos.y + dy * t;
+                        const checkZ = prevPos.z + dz * t;
                         
-                        applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
-                        io.to(playerId).emit('notification', 'Knocked back by wind charge!');
-                    });
+                        const blockX = Math.floor(checkX);
+                        const blockY = Math.floor(checkY);
+                        const blockZ = Math.floor(checkZ);
+                        const blockKeyStr = blockKey(blockX, blockY, blockZ);
+                        
+                        if (blocks.has(blockKeyStr)) {
+                            hitBlock = { x: blockX, y: blockY, z: blockZ };
+                            break;
+                        }
+                    }
                     
-                    // Visual explosion effect
-                    io.emit('windchargeExplosion', {
-                        x: hitBlock.x,
-                        y: hitBlock.y,
-                        z: hitBlock.z
-                    });
-                    
-                    windcharge.arrived = true;
-                    windchargeRemovals.push(id);
+                    if (hitBlock) {
+                        windcharge.hit = true;
+                        
+                        // Minecraft-style wind charge explosion - knocks back players 4 blocks
+                        const explosionPos = { x: hitBlock.x + 0.5, y: hitBlock.y + 0.5, z: hitBlock.z + 0.5 };
+                        const explosionRadius = 4;
+                        const explosionForce = 4; // 4 blocks knockback
+                        
+                        players.forEach((player, playerId) => {
+                            if (player.spectator) return;
+                            
+                            applyExplosionKnockback(player, explosionPos, explosionRadius, explosionForce);
+                            
+                            if (playerId === windcharge.owner) {
+                                io.to(playerId).emit('notification', 'Wind charge explosion!');
+                            } else {
+                                io.to(playerId).emit('notification', 'Knocked back 4 blocks by wind charge!');
+                            }
+                        });
+                        
+                        // Visual explosion effect
+                        io.emit('windchargeExplosion', {
+                            x: hitBlock.x,
+                            y: hitBlock.y,
+                            z: hitBlock.z
+                        });
+                        
+                        windcharge.arrived = true;
+                        windchargeRemovals.push(id);
+                    } else if (windcharge.pos.y < -30 || now - windcharge.createdAt > 10000) {
+                        windcharge.arrived = true;
+                        windchargeRemovals.push(id);
+                    } else {
+                        windchargeUpdates.push({
+                            id: windcharge.id,
+                            x: windcharge.pos.x,
+                            y: windcharge.pos.y,
+                            z: windcharge.pos.z
+                        });
+                    }
                 } else if (windcharge.pos.y < -30 || now - windcharge.createdAt > 10000) {
                     windcharge.arrived = true;
                     windchargeRemovals.push(id);
@@ -1730,16 +1842,6 @@ setInterval(() => {
                         z: windcharge.pos.z
                     });
                 }
-            } else if (windcharge.pos.y < -30 || now - windcharge.createdAt > 10000) {
-                windcharge.arrived = true;
-                windchargeRemovals.push(id);
-            } else {
-                windchargeUpdates.push({
-                    id: windcharge.id,
-                    x: windcharge.pos.x,
-                    y: windcharge.pos.y,
-                    z: windcharge.pos.z
-                });
             }
         });
         
@@ -1785,6 +1887,7 @@ setInterval(() => {
                     p.pos.z = p.bedPos.z + 0.5;
                     p.rot.yaw = 0;
                     p.rot.pitch = 0;
+                    p.knockbackVelocity = { x: 0, y: 0, z: 0 }; // Reset knockback
                     io.to(id).emit('respawn', { pos: p.pos, rot: p.rot });
                     io.to(id).emit('notification', 'You fell into the void and respawned at your bed!');
                 } else {
