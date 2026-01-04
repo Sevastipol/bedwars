@@ -432,6 +432,7 @@
         let lastEnderpearlThrow = 0;
         let lastFireballThrow = 0;
         let lastWindchargeThrow = 0;
+        let knockbackImmunityUntil = 0; // Added: Prevents position override after teleport
 
         // --- Screen Shake Variables ---
         let screenShakeIntensity = 0;
@@ -454,8 +455,8 @@
             'Wooden Sword': { color: 0x8B4513, cost: { iron: 20 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 2, hasTexture: true },
             'Iron Sword': { color: 0xC0C0C0, cost: { gold: 10 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 3, hasTexture: true },
             'Emerald Sword': { color: 0x00FF00, cost: { emerald: 5 }, buyAmount: 1, isItem: true, isWeapon: true, damage: 4, hasTexture: true },
-            'Axe': { color: 0x8B4513, cost: { gold: 20 }, buyAmount: 1, isItem: true, isTool: true, toolType: 'axe', breakMultiplier: 0.5, hasTexture: true },
-            'Pickaxe': { color: 0xC0C0C0, cost: { gold: 20 }, buyAmount: 1, isItem: true, isTool: true, toolType: 'pickaxe', breakMultiplier: 0.5, hasTexture: true }
+            'Axe': { color: 0x8B4513, cost: { gold: 5 }, buyAmount: 1, isItem: true, isTool: true, toolType: 'axe', breakMultiplier: 0.5, hasTexture: true },
+            'Pickaxe': { color: 0xC0C0C0, cost: { gold: 5 }, buyAmount: 1, isItem: true, isTool: true, toolType: 'pickaxe', breakMultiplier: 0.5, hasTexture: true }
         };
         const MAX_STACK = 64;
         const INVENTORY_SIZE = 9;
@@ -2916,9 +2917,26 @@
         });
 
         socket.on('teleport', (data) => {
+            // Set knockback immunity to prevent position override
+            knockbackImmunityUntil = Date.now() + 100; // 100ms immunity
+            
             camera.position.set(data.x, data.y, data.z);
             velocity.set(0, 0, 0);
             showNotification('Teleported!', 1500);
+            
+            // Sync position immediately with server
+            if (!isSpectator) {
+                socket.emit('playerUpdate', {
+                    pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+                    rot: { yaw: camera.rotation.y, pitch: camera.rotation.x },
+                    crouch: isCrouching,
+                    selected: selectedSlotIndex,
+                    spectator: isSpectator,
+                    equippedWeapon: inventory[selectedSlotIndex] && 
+                                   BLOCK_TYPES[inventory[selectedSlotIndex]?.type]?.isWeapon ? 
+                                   inventory[selectedSlotIndex].type : null
+                });
+            }
         });
 
         socket.on('bedDestroyed', () => {
