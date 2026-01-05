@@ -347,7 +347,6 @@ function resetGame() {
         p.selected = 0;
         p.rot = { yaw: 0, pitch: 0 };
         p.crouch = false;
-        p.lastRespawn = 0;
         p.bedPos = null;
         p.spectator = true;
         p.health = PLAYER_MAX_HEALTH;
@@ -356,7 +355,6 @@ function resetGame() {
         p.lastEnderpearlThrow = 0;
         p.lastFireballThrow = 0;
         p.lastWindchargeThrow = 0;
-        p.knockbackImmuneUntil = 0;
         
         io.to(id).emit('setSpectator', true);
         io.to(id).emit('respawn', {
@@ -510,14 +508,6 @@ function processBlockBreak(playerId, x, y, z) {
 }
 
 function applyKnockback(target, sourcePos, force, upwardBoost = 0.3, overrideY = false) {
-    const now = Date.now();
-    
-    if (now < target.knockbackImmuneUntil) {
-        return;
-    }
-    
-    target.knockbackImmuneUntil = now + 500;
-    
     let dx = target.pos.x - sourcePos.x;
     let dy = target.pos.y - sourcePos.y;
     let dz = target.pos.z - sourcePos.z;
@@ -546,14 +536,6 @@ function applyKnockback(target, sourcePos, force, upwardBoost = 0.3, overrideY =
 }
 
 function applyExplosionKnockback(target, explosionPos, radius, force) {
-    const now = Date.now();
-    
-    if (now < target.knockbackImmuneUntil) {
-        return;
-    }
-    
-    target.knockbackImmuneUntil = now + 500;
-    
     const dx = target.pos.x - explosionPos.x;
     const dy = target.pos.y - explosionPos.y;
     const dz = target.pos.z - explosionPos.z;
@@ -592,7 +574,6 @@ io.on('connection', (socket) => {
         currency: { iron: 0, gold: 0, emerald: 0 },
         selected: 0,
         bedPos: null,
-        lastRespawn: 0,
         spectator: true,
         health: PLAYER_MAX_HEALTH,
         id: socket.id,
@@ -600,8 +581,7 @@ io.on('connection', (socket) => {
         equippedWeapon: null,
         lastEnderpearlThrow: 0,
         lastFireballThrow: 0,
-        lastWindchargeThrow: 0,
-        knockbackImmuneUntil: 0
+        lastWindchargeThrow: 0
     };
     
     players.set(socket.id, playerState);
@@ -661,9 +641,7 @@ io.on('connection', (socket) => {
     socket.on('playerUpdate', (data) => {
         const p = players.get(socket.id);
         if (p) {
-            if (Date.now() >= p.knockbackImmuneUntil) {
-                p.pos = data.pos;
-            }
+            p.pos = data.pos;
             p.rot = data.rot;
             p.crouch = data.crouch;
             p.selected = data.selected;
@@ -753,6 +731,18 @@ io.on('connection', (socket) => {
         if (dist > 5.5) {
             socket.emit('revertPlace', { x, y, z });
             socket.emit('notification', 'Too far away!');
+            return;
+        }
+        
+        // Check if player is trying to place on the block they're standing on
+        const playerFeetY = p.pos.y - eyeHeight;
+        const playerFeetBlockY = Math.floor(playerFeetY);
+        const playerFeetBlockX = Math.floor(p.pos.x);
+        const playerFeetBlockZ = Math.floor(p.pos.z);
+        
+        if (x === playerFeetBlockX && y === playerFeetBlockY && z === playerFeetBlockZ) {
+            socket.emit('revertPlace', { x, y, z });
+            socket.emit('notification', 'Cannot place block where you are standing!');
             return;
         }
         
@@ -1762,7 +1752,7 @@ setInterval(() => {
         players.forEach((p, id) => {
             if (p.spectator) return;
             
-            if (p.pos.y < -30 && now - p.lastRespawn > 2000) {
+            if (p.pos.y < -30) {
                 const bedKey = p.bedPos ? blockKey(p.bedPos.x, p.bedPos.y, p.bedPos.z) : null;
                 const hasBed = p.bedPos && blocks.get(bedKey) === 'Bed';
                 
@@ -1777,7 +1767,6 @@ setInterval(() => {
                 } else {
                     eliminatePlayer(id, null);
                 }
-                p.lastRespawn = now;
             }
         });
         
